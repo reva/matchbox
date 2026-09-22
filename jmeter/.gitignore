@@ -1,2 +1,14 @@
-*/
+# JMeter run artifacts
 *.jtl
+*.log
+report/
+results/
+payloads/
+
+# Target definitions holding credentials, and client certificates.
+# Name your own targets *.private.env so they never get committed.
+targets/*.private.env
+certs/
+compose/ig/
+.loadtest-passwd
+__pycache__/

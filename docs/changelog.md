@@ -1,3 +1,6 @@
+- Add a load test for `$validate` in `jmeter/`: arrival rate driven scenarios (smoke, steady, ramp) that can target a
+  locally built matchbox, the published matchbox-ch-elm image, or a remote instance with mutual TLS, reporting the
+  server side validation time separately from HTTP latency and recording each run in a comparable history file
 - GUI: browse the FHIR package registry packages2.fhir.org on the IGs page, filtered by package name, FHIR version and
   publication date, mark the installed packages, and install a selected package version (hidden when the server is in
   httpReadOnly mode) (#583)
