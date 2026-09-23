@@ -1,0 +1,88 @@
+# Matchbox with CH ELM loaded, for load testing.
+#
+#   local    builds matchbox from this working tree. Use this to measure your
+#            own code changes.
+#   released pulls the published matchbox-ch-elm image. Use this as a baseline.
+#
+# Both publish the same endpoint, so the load test does not care which is up:
+#   http://localhost:8080/matchboxv3
+#
+# run.sh drives this. To use it directly, build the jar first:
+#   mvn -DskipTests package
+#   docker compose --profile local up --build -d
+#   docker compose --profile local down -v
+#
+# The released image predates the entrypoint honouring JAVA_OPTS, so it still
+# needs the override; the locally built image does not.
+
+x-entrypoint: &entrypoint
+  entrypoint:
+    - /bin/sh
+    - -c
+    - >-
+      exec java $${JAVA_OPTS}
+      -Dfhir.settings.path=/config/fhir-settings.json
+      -Dspring.config.additional-location=optional:file:/config/application.yaml,optional:file:application.yaml
+      -jar /matchbox.jar
+
+services:
+  matchbox:
+    profiles: ["local"]
+    build:
+      context: ../../matchbox-server
+      dockerfile: Dockerfile
+    container_name: matchbox-loadtest
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - ./application.yaml:/config/application.yaml:ro
+      - ./ig:/ig:ro
+      # Matchbox caches downloaded IG dependencies in its H2 database. Without
+      # a volume, every run re-fetches the whole CH ELM dependency tree from
+      # packages2.fhir.org, which dominates startup. run.sh keeps this between
+      # runs and only drops it when you pass --fresh.
+      - matchbox-db:/database
+    environment:
+      JAVA_OPTS: "${JAVA_OPTS:--Xmx4g -Xms4g -XX:+UseG1GC}"
+      SERVER_PORT: "8080"
+    # Validation is CPU bound. Pinning cpus makes runs comparable across
+    # machines and lets you measure how throughput scales with cores.
+    cpus: ${CPUS:-4}
+    mem_limit: ${MEM_LIMIT:-6g}
+    # /fhir/metadata answers long before the validation engine has finished
+    # loading packages, so it is not a readiness signal. The Spring Boot
+    # readiness probe reports OUT_OF_SERVICE until the engine is usable, which
+    # on a cold start is a couple of minutes.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/matchboxv3/actuator/health/readiness >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 90
+      start_period: 60s
+
+  matchbox-released:
+    profiles: ["released"]
+    image: "${CHELM_IMAGE:-europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox-ch-elm:1.15.1}"
+    container_name: matchbox-loadtest
+    <<: *entrypoint
+    ports:
+      # The published image serves on 80, not 8080.
+      - "${PORT:-8080}:80"
+    environment:
+      JAVA_OPTS: "${JAVA_OPTS:--Xmx4g -Xms4g -XX:+UseG1GC}"
+    volumes:
+      - matchbox-db-released:/database
+    cpus: ${CPUS:-4}
+    mem_limit: ${MEM_LIMIT:-6g}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:80/matchboxv3/actuator/health/readiness >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 90
+      start_period: 60s
+
+volumes:
+  # Kept between runs so the IG dependency download is paid once. The two
+  # targets get separate caches because they are different matchbox versions.
+  matchbox-db:
+  matchbox-db-released:

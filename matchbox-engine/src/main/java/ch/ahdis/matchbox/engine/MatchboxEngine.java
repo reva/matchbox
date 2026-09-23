@@ -926,6 +926,40 @@ public class MatchboxEngine extends ValidationEngine {
 		return null;
 	}
 
+	/**
+	 * Returns whether a canonical resource is known, without converting it.
+	 *
+	 * {@link #getCanonicalResource(String, String)} converts the resource from R5 to the requested version before
+	 * returning it. Callers that only want to know whether the canonical resolves pay for a conversion whose result
+	 * they discard, on a per-request path. This does the same lookup and reports only whether it succeeded.
+	 *
+	 * The FHIR version is still taken into account: as in {@link #getCanonicalResource(String, String)}, a version
+	 * that cannot be converted to counts as not found.
+	 *
+	 * @param canonical   the canonical URL to look up
+	 * @param fhirVersion the FHIR version the caller would want the resource in
+	 * @return true if the canonical resolves and could be returned for that version
+	 */
+	public boolean hasCanonicalResource(final String canonical, final String fhirVersion) {
+		switch (fhirVersion) {
+			case "4.0.1":
+			case "4.3.0":
+			case "5.0.0":
+				break;
+			default:
+				return false;
+		}
+		final org.hl7.fhir.r5.model.Resource fetched =
+			this.getContext().fetchResource(null, canonical, IWorkerContext.VersionResolutionRules.defaultRule());
+		if (fetched == null) {
+			return false;
+		}
+		// allResourcesById is not package aware (???) so we need to fetch it again
+		return this.getContext().fetchResource(fetched.getClass(),
+															canonical,
+															IWorkerContext.VersionResolutionRules.defaultRule()) != null;
+	}
+
 	// same as above but called from the validator on the meta data type
 	// @Override
 	// public CanonicalResource fetchCanonicalResource(IResourceValidator validator, String url) throws URISyntaxException {
@@ -948,7 +982,7 @@ public class MatchboxEngine extends ValidationEngine {
 	public boolean fetchesCanonicalResource(IResourceValidator validator, String url) {
 		// don't use the fetcher, should we do this better in directly in StandAloneValidatorFetcher implmentation
 		// https://github.com/ahdis/matchbox/issues/67
-		return getCanonicalResource(url,"5.0.0") != null;
+		return hasCanonicalResource(url, "5.0.0");
 	}
 
 	/**

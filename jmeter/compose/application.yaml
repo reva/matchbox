@@ -1,0 +1,46 @@
+# CH ELM configuration for a locally built matchbox under load test.
+#
+# Mirrors ahdis/matchbox-ch-elm/src/application.yaml so that local numbers are
+# comparable with the published matchbox-ch-elm image. If that file changes,
+# update this one, otherwise you are benchmarking a different configuration
+# than the one you ship.
+#
+# The package tarball is mounted at /ig by docker-compose.yml.
+# extract-payloads.sh puts it there.
+
+server:
+  port: 8080
+  servlet:
+    context-path: /matchboxv3
+
+hapi:
+  fhir:
+    implementationguides:
+      chelm:
+        name: ch.fhir.ig.ch-elm
+        version: 1.15.1
+        url: file:/ig/ch.fhir.ig.ch-elm.tgz
+
+matchbox:
+  fhir:
+    context:
+      igsPreloaded: ch.fhir.ig.ch-elm#1.15.1
+      ssrfProtectionEnabled: false
+      txServer: http://localhost:${server.port}/matchboxv3/tx
+      txUseEcosystem: false
+      httpReadOnly: true
+      suppressWarnInfo:
+        hl7.fhir.r4.core#4.0.1:
+          - "Constraint failed: dom-6:"
+          - "regex:Entry '(.+)' isn't reachable by traversing forwards from the Composition"
+        ch.fhir.ig.ch-elm:
+          - "regex:Binding for path (.+) has no source, so can't be checked"
+          - "regex:None of the codings provided are in the value set 'Observation Interpretation Codes'(.*)"
+          - "regex:This element does not match any known slice defined in the profile http://hl7.eu/fhir/laboratory/StructureDefinition/Patient-eu-lab(.+)"
+          - "regex:This element does not match any known slice defined in the profile http://hl7.eu/fhir/laboratory/StructureDefinition/HumanName-eu(.+)"
+          - "regex:This element does not match any known slice defined in the profile http://fhir.ch/ig/ch-core/StructureDefinition/ch-core-humanname(.+)"
+          - "regex:This element does not match any known slice defined in the profile http://hl7.eu/fhir/laboratory/StructureDefinition/Address-eu(.+)"
+          - "regex:Does not match slice '(.+)' (.+)"
+          - "regex:(.*)Unable to find a match for profile(.+)"
+          - "regex:(.+): Specified profile type was '(.+)' in profile '(.+)', but found type '(.+)"
+          - "regex:Found multiple matching profiles for(.+)"
