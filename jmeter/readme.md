@@ -246,8 +246,33 @@ match the CPU quota.
 | 4 cpu, 8g, G1      |    1 |      14.59 |              |  3618 ms |   7.0 GiB |
 
 **Use ParallelGC.** The G1 and Parallel ranges do not overlap over four runs
-each: 29% more throughput, 45% lower p95, and less heap. This is the single
-largest effect found, and it is one flag.
+each: 29% more throughput, 45% lower p95, and less heap. This is one flag.
+
+The reason is not the obvious one. With `-Xlog:gc` captured over the same load
+window (`findings/gc-g1.log`, `findings/gc-parallelgc.log`), ParallelGC pauses
+roughly twice as much as G1:
+
+| | G1 | Parallel |
+|---------------------|--------:|---------:|
+| collections in ~95s |     154 |      286 |
+| total pause         |   8.4 s |   16.2 s |
+| share of wall clock |   8.9 % |   17.1 % |
+| longest pause       |  302 ms |  1650 ms |
+| full collections    |       0 |        2 |
+
+So Parallel wins despite stopping the application for longer. What it avoids is
+G1's concurrent work: marking threads that run alongside the application and
+compete for the same four cores, plus the write barriers G1 needs on reference
+writes. On a CPU-limited container that concurrent overhead costs more than the
+extra pause time, and validation gets more CPU.
+
+That trade has a real cost. Parallel's longest pause here was 1650 ms against
+G1's 302 ms, and pause length grows with heap, so this result should not be
+carried over to a much larger heap or to a service with a strict tail-latency
+SLA. It holds for a small heap on few cores, which is what these containers are.
+
+GC also takes 9 to 17 percent of wall clock either way, which is the real
+signal: this workload allocates heavily.
 
 **Validation is allocation bound past about four cores, not CPU bound.**
 Throughput scales cleanly from 1 to 4 cores (2.65, 6.49, 16.41 req/s, so
@@ -260,7 +285,22 @@ constraint. Size instances at about four cores and scale out rather than up.
 and made p99 worse (4386 to 7711 ms). Peak usage is 2.7–3.7 GiB under a 4g cap,
 so the heap was never the constraint.
 
-**One hypothesis tested and rejected.** `MatchboxEngineSupport.getMatchboxEngine`
+**Do not set `txServerCache: false`.** [Issue #422](https://github.com/ahdis/matchbox/issues/422)
+reports that the default (`true`) caused growing memory and validation times,
+and that turning it off helped. That is no longer true on this version: turning
+it off roughly halves throughput, on both collectors.
+
+| `txServerCache` | G1    | Parallel |
+|-----------------|------:|---------:|
+| `true` (default)| 15.36 |    18.95 |
+| `false`         |  8.20 |    10.57 |
+
+The issue is closed and org.hl7.fhir.core has moved on several versions since it
+was filed, so the advice in it is stale. Keep the default. Usefully, the
+ParallelGC advantage shows up in both rows (+23% and +29%), which is an
+independent replication of the result above under a different configuration.
+
+**A second hypothesis tested and rejected.** `MatchboxEngineSupport.getMatchboxEngine`
 is `synchronized` on a singleton, and for a request without an `ig` parameter it
 calls `MatchboxEngine.getCanonicalResource` inside that lock, which does two
 `fetchResource` calls plus a full R5 to R4 conversion of the profile and then

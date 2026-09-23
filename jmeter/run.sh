@@ -351,7 +351,7 @@ run_once() {
   LT_TIMESTAMP="$STAMP" LT_TARGET="$TARGET_NAME" LT_SCENARIO="$tag" \
   LT_PROFILE_KEY="$PROFILE_KEY" LT_RATE="$rate" LT_DURATION="$DURATION" \
   LT_THREADS="$THREADS" LT_JAVA_OPTS="${JAVA_OPTS:-}" LT_CPUS="${CPUS:-}" \
-  LT_IG_VERSION="$IG_VERSION" \
+  LT_IG_VERSION="$IG_VERSION" LT_PARAMS="$EXTRA_PARAMS" \
     ./summarize.sh "$dir/run.jtl" "$dir" results/history.csv
 
   LAST_DIR="$dir"

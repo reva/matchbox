@@ -5,6 +5,10 @@ report/
 results/
 payloads/
 
+# Evidence for the documented findings is committed, unlike ordinary run output.
+!findings/
+!findings/*.log
+
 # Target definitions holding credentials, and client certificates.
 # Name your own targets *.private.env so they never get committed.
 targets/*.private.env

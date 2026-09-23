@@ -183,15 +183,15 @@ printf '\n'
 
 if [ ! -f "$HISTORY" ]; then
 	mkdir -p "$(dirname "$HISTORY")"
-	printf 'timestamp,target,scenario,profile_key,matchbox_version,ig_version,java_opts,cpus,threads,requested_rate_per_s,duration_s,samples,failed,error_rate,achieved_rps,http_p50,http_p95,http_p99,validation_p50,validation_p95,validation_p99,heap_bytes_peak,run_dir\n' > "$HISTORY"
+	printf 'timestamp,target,scenario,profile_key,matchbox_version,ig_version,java_opts,cpus,threads,requested_rate_per_s,duration_s,samples,failed,error_rate,achieved_rps,http_p50,http_p95,http_p99,validation_p50,validation_p95,validation_p99,heap_bytes_peak,run_dir,params\n' > "$HISTORY"
 fi
 
 # java_opts contains spaces and commas, so quote it.
-printf '%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+printf '%s,%s,%s,%s,%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"%s"\n' \
 	"${LT_TIMESTAMP:-}" "${LT_TARGET:-}" "${LT_SCENARIO:-}" "${LT_PROFILE_KEY:-}" \
 	"$versions" "${LT_IG_VERSION:-}" "${LT_JAVA_OPTS:-}" "${LT_CPUS:-}" \
 	"${LT_THREADS:-}" "${LT_RATE:-}" "${LT_DURATION:-}" \
 	"$total" "$failed" "$errrate" "$rps" \
 	"$http_p50" "$http_p95" "$http_p99" \
 	"$val_p50" "$val_p95" "$val_p99" \
-	"$heap" "$(basename "$OUT")" >> "$HISTORY"
+	"$heap" "$(basename "$OUT")" "${LT_PARAMS:-}" >> "$HISTORY"
