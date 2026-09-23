@@ -27,6 +27,15 @@ public class MatchboxFhirContextProperties {
 
 	private boolean ssrfProtectionEnabled = true;
 
+	/**
+	 * Register conformance resources from packages lazily, parsing each one on first use instead of parsing every
+	 * resource of every package while the engine is built.
+	 *
+	 * Off by default: it changes when parsing happens, so the first requests after startup are slower while the
+	 * resources they need are materialised.
+	 */
+	private boolean lazyLoadPackageResources = false;
+
 	private MatchboxFhirContextLlmProperties llm = new MatchboxFhirContextLlmProperties();
 
 	public @Nullable Map<String, Set<String>> getSuppressWarnInfo() {
@@ -59,6 +68,14 @@ public class MatchboxFhirContextProperties {
 
 	public boolean isOnlyOneEngine() {
 		return this.onlyOneEngine;
+	}
+
+	public void setLazyLoadPackageResources(final boolean lazyLoadPackageResources) {
+		this.lazyLoadPackageResources = lazyLoadPackageResources;
+	}
+
+	public boolean isLazyLoadPackageResources() {
+		return this.lazyLoadPackageResources;
 	}
 
 	public void setHttpReadOnly(final boolean httpReadOnly) {

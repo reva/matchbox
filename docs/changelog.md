@@ -1,3 +1,9 @@
+- Add `matchbox.fhir.context.lazyLoadPackageResources` (default `false`). When enabled, conformance resources from
+  packages are registered as deferred-load proxies and parsed on first use rather than all being parsed while the
+  engine is built. Measured on CH ELM over three runs each: startup to readiness 88.0s to 75.3s, heap after
+  startup 2.38 GiB to 1.92 GiB, warm validation latency and validation findings unchanged
+- Keep the cause when a package dependency fails to load, instead of throwing a bare `Failed to load dependency`
+  that hides why
 - GUI: browse the FHIR package registry packages2.fhir.org on the IGs page, filtered by package name, FHIR version and
   publication date, mark the installed packages, and install a selected package version (hidden when the server is in
   httpReadOnly mode) (#583)

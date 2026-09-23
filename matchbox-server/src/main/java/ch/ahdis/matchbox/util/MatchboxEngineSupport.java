@@ -206,7 +206,8 @@ public class MatchboxEngineSupport {
 																				this.myNpmPackageVersionDao,
 																				this.myDaoRegistry,
 																				this.myBinaryStorageSvc,
-																				this.myTxManager));
+																				this.myTxManager,
+																				this.matchboxFhirProperties.getContext().isLazyLoadPackageResources()));
 		if (ig != null) {
 			try {
 				validator.getIgLoader().loadIg(validator.getIgs(), validator.getBinaries(), ig, true);
@@ -315,7 +316,8 @@ public class MatchboxEngineSupport {
 																			this.myNpmPackageVersionDao,
 																			this.myDaoRegistry,
 																			this.myBinaryStorageSvc,
-																			this.myTxManager));
+																			this.myTxManager,
+																			this.matchboxFhirProperties.getContext().isLazyLoadPackageResources()));
 					log.debug("Load R5 Specials");
 					final var r5e = new R5ExtensionsLoader(mainEngine.getPcm(), mainEngine.getContext());
 					r5e.load();
@@ -341,7 +343,8 @@ public class MatchboxEngineSupport {
 				this.myNpmPackageVersionDao,
 				this.myDaoRegistry,
 				this.myBinaryStorageSvc,
-				this.myTxManager));
+				this.myTxManager,
+				this.matchboxFhirProperties.getContext().isLazyLoadPackageResources()));
 				cliContextMain.setIg(this.getFhirCorePackage(cliContextMain));
 				this.configureValidationEngine(mainEngine, cliContextMain);
 			} else if (this.serverFhirVersion == FhirVersionEnum.R5) {
@@ -355,7 +358,8 @@ public class MatchboxEngineSupport {
 				this.myNpmPackageVersionDao,
 				this.myDaoRegistry,
 				this.myBinaryStorageSvc,
-				this.myTxManager));
+				this.myTxManager,
+				this.matchboxFhirProperties.getContext().isLazyLoadPackageResources()));
 				cliContextMain.setIg(this.getFhirCorePackage(cliContextMain));
 				this.configureValidationEngine(mainEngine, cliContextMain);
 			} else {

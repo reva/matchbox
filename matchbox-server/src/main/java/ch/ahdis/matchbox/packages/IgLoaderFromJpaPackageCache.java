@@ -27,6 +27,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
 
 import javax.annotation.Nonnull;
@@ -61,6 +62,7 @@ import ca.uhn.fhir.i18n.Msg;
 import ca.uhn.fhir.jpa.api.dao.DaoRegistry;
 import ca.uhn.fhir.jpa.binary.api.IBinaryStorageSvc;
 import ca.uhn.fhir.jpa.dao.data.INpmPackageVersionDao;
+import ca.uhn.fhir.jpa.model.dao.JpaPid;
 import ca.uhn.fhir.jpa.model.entity.NpmPackageVersionEntity;
 import ca.uhn.fhir.jpa.model.entity.NpmPackageVersionResourceEntity;
 import ca.uhn.fhir.jpa.packages.IHapiPackageCacheManager;
@@ -85,6 +87,7 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 	private DaoRegistry myDaoRegistry;
 	private IBinaryStorageSvc myBinaryStorageSvc;
 	private PlatformTransactionManager myTxManager;
+	private final boolean lazyLoadPackageResources;
 
 	private final Map<FhirVersionEnum, FhirContext> myVersionToContext = Collections.synchronizedMap(new HashMap<>());
 
@@ -93,8 +96,9 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 	public IgLoaderFromJpaPackageCache(FilesystemPackageCacheManager packageCacheManager, SimpleWorkerContext context,
 			String theVersion, boolean debug, IHapiPackageCacheManager myPackageCacheManager,
 			INpmPackageVersionDao myNpmPackageVersionDao, DaoRegistry myDaoRegistry, IBinaryStorageSvc myBinaryStorageSvc,
-			PlatformTransactionManager myTxManager) {
+			PlatformTransactionManager myTxManager, boolean lazyLoadPackageResources) {
 		super(packageCacheManager, context, theVersion, debug);
+		this.lazyLoadPackageResources = lazyLoadPackageResources;
 		this.myPackageCacheManager = myPackageCacheManager;
 		this.myNpmPackageVersionDao = myNpmPackageVersionDao;
 		this.myDaoRegistry = myDaoRegistry;
@@ -145,12 +149,22 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 	}
 
 	private org.hl7.fhir.r5.model.Resource loadPackageEntity(NpmPackageVersionResourceEntity contents) {
+		return loadPackageEntity(contents.getResourceBinary().getId(), contents.getFhirVersion(), contents.toString());
+	}
+
+	/**
+	 * Loads and parses one package resource from its binary, without needing the JPA entity to still be attached.
+	 * The lazy path keeps only primitives so that the persistence context can be cleared after indexing a package.
+	 */
+	private org.hl7.fhir.r5.model.Resource loadPackageEntity(final JpaPid binaryId,
+																			  final FhirVersionEnum fhirVersion,
+																			  final String describedBy) {
 		try {
-			final var binary = MatchboxServerUtils.getBinaryFromId(contents.getResourceBinary().getId(), myDaoRegistry);
+			final var binary = MatchboxServerUtils.getBinaryFromId(binaryId, myDaoRegistry);
 			final byte[] resourceContentsBytes = MatchboxServerUtils.fetchBlobFromBinary(binary, myBinaryStorageSvc,
 																												  myCtx);
 			final String resourceContents = new String(resourceContentsBytes, StandardCharsets.UTF_8);
-			switch (contents.getFhirVersion()) {
+			switch (fhirVersion) {
 			case DSTU3:
 				return VersionConvertorFactory_30_50
 						.convertResource(new org.hl7.fhir.dstu3.formats.JsonParser().parse(resourceContents));
@@ -168,11 +182,132 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 				return new org.hl7.fhir.r5.formats.JsonParser().parse(resourceContents);
 			default:
 				log.error("FHIR version not support for loading from matchbox case ");
-				throw new RuntimeException(Msg.code(1305) + "Failed to load package resource " + contents);
+				throw new RuntimeException(Msg.code(1305) + "Failed to load package resource " + describedBy);
 			}
 		} catch (Exception e) {
-			throw new RuntimeException(Msg.code(1305) + "Failed to load package resource " + contents, e);
+			throw new RuntimeException(Msg.code(1305) + "Failed to load package resource " + describedBy, e);
 		}
+	}
+
+	/**
+	 * The conformance resource types that are loaded from a package into the validation context. Shared by the eager
+	 * and the lazy paths so that both register exactly the same set.
+	 */
+	private static final String[] CONFORMANCE_RESOURCE_TYPES = {
+		"NamingSystem", "CapabilityStatement", "CodeSystem", "ValueSet", "StructureDefinition", "Measure", "Library",
+		"ConceptMap", "SearchParameter", "StructureMap", "Questionnaire", "OperationDefinition", "ActorDefinition",
+		"Requirements"
+	};
+
+	/**
+	 * Registers a package's conformance resources without parsing them.
+	 *
+	 * The npm tables already index every resource in a package by canonical URL, version and type, which is all the
+	 * context needs to resolve a canonical. A {@link CanonicalResourceProxy} is registered per row and the body is
+	 * parsed only when something asks for the resource. A CH ELM engine loads around 10000 conformance resources
+	 * across its dependency closure while a single validation reaches roughly a tenth of them, so most of that
+	 * parsing is never needed.
+	 *
+	 * NpmPackage.canLazyLoad() is false for packages served from the JPA cache, since they are materialised in
+	 * memory rather than streamed from disk, so the package index cannot be used for this and the database rows are
+	 * used instead.
+	 *
+	 * Resolution behaviour is unchanged: every resource stays resolvable, it is just materialised later.
+	 *
+	 * @return the number of resources registered.
+	 */
+	/**
+	 * Derives the resource id for a deferred load registration.
+	 *
+	 * The npm resource table does not store the FHIR resource id, and CanonicalResourceManager refuses to register a
+	 * proxy without one. Package files are named "<Type>-<id>.json" by the IG publisher, so the filename gives it;
+	 * where it does not, the last segment of the canonical URL is the conventional fallback.
+	 */
+	private static String deferredLoadId(final NpmPackageVersionResourceEntity row) {
+		String filename = row.getFilename();
+		if (filename != null) {
+			final int slash = filename.lastIndexOf('/');
+			if (slash >= 0) {
+				filename = filename.substring(slash + 1);
+			}
+			if (filename.endsWith(".json")) {
+				filename = filename.substring(0, filename.length() - ".json".length());
+			}
+			final String prefix = row.getResourceType() + "-";
+			if (filename.startsWith(prefix)) {
+				filename = filename.substring(prefix.length());
+			}
+			if (!filename.isEmpty()) {
+				return filename;
+			}
+		}
+		final String url = row.getCanonicalUrl();
+		final int slash = url.lastIndexOf('/');
+		return (slash >= 0 && slash < url.length() - 1) ? url.substring(slash + 1) : url;
+	}
+
+	/**
+	 * Registers a package's conformance resources without parsing them.
+	 *
+	 * The package is already held in memory by the time it gets here, so the cost being deferred is the JSON parse
+	 * and the version conversion to R5, not I/O. The package index carries what the context needs to resolve a
+	 * canonical (type, id, url, version), so a {@link CanonicalResourceProxy} is registered per entry and the body is
+	 * parsed only when something asks for the resource. A CH ELM engine loads around 10000 conformance resources
+	 * across its dependency closure while a single validation reaches roughly a tenth of them.
+	 *
+	 * This deliberately does not go through the JPA entities: NpmPackageVersionEntity.getResources() would pull tens
+	 * of thousands of rows into the persistence context, which stays open for the whole recursive load, and Hibernate
+	 * then auto-flushes over all of them on every later query. That is quadratic and ends up far slower than the
+	 * eager load it replaces.
+	 *
+	 * Resolution behaviour is unchanged: every resource stays resolvable, it is just materialised later.
+	 *
+	 * @return the number of resources registered.
+	 */
+	private int registerResourcesLazily(final NpmPackage pi,
+													final String fhirVersion,
+													final PackageInformation packageInfo) throws IOException {
+		int count = 0;
+		for (final NpmPackage.PackageResourceInformation pri : pi.listIndexedResources(CONFORMANCE_RESOURCE_TYPES)) {
+			if (pri.getUrl() == null) {
+				// Nothing to resolve it by; the context indexes canonicals.
+				continue;
+			}
+			++count;
+			this.getContext().registerResourceFromPackage(new CanonicalResourceProxy(pri.getResourceType(),
+																												 pri.getId(),
+																												 pri.getUrl(),
+																												 pri.getVersion(),
+																												 pri.getSupplements(),
+																												 pri.getContent(),
+																												 pri.getDerivation()) {
+				@Override
+				public CanonicalResource loadResource() throws FHIRException {
+					final Resource r;
+					try {
+						r = loadResourceByVersion(fhirVersion,
+														  FileUtilities.streamToBytes(pi.load(pri)),
+														  pri.getFilename());
+					} catch (final IOException e) {
+						throw new FHIRException("Failed to lazily load " + pri.getFilename() + " from "
+														  + packageInfo.getVID(), e);
+					}
+					// Same cleanups the eager path applies, see ahdis/matchbox#227.
+					if (r instanceof org.hl7.fhir.r5.model.StructureMap sm) {
+						cleanModifierExtensions(sm);
+					}
+					if (r instanceof org.hl7.fhir.r5.model.ConceptMap cm) {
+						cleanModifierExtensions(cm);
+					}
+					if (!(r instanceof CanonicalResource)) {
+						throw new FHIRException("Resource is not a CanonicalResource: " + r.getClass().getName()
+														  + " from package " + packageInfo.getVID());
+					}
+					return (CanonicalResource) r;
+				}
+			}, packageInfo);
+		}
+		return count;
 	}
 
 	@Override
@@ -246,7 +381,7 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 				try {
 					loadIg(igs, binaries, dependency, recursive);
 				} catch (FHIRException | IOException e) {
-					throw new RuntimeException(Msg.code(1305) + "Failed to load dependency " + dependency);
+					throw new RuntimeException(Msg.code(1305) + "Failed to load dependency " + dependency, e);
 				}
 				log.info("Finished loading depending package " + dependency + " for "+ src);
 			}
@@ -277,8 +412,12 @@ public class IgLoaderFromJpaPackageCache extends IgLoader {
 				getContext().getLoadedPackages().add(pi.name() + "#" + pi.version());
 				
 				try {
-					for (String s : pi.listResources("NamingSystem", "CapabilityStatement", "CodeSystem", "ValueSet", "StructureDefinition", "Measure", "Library",
-					"ConceptMap", "SearchParameter", "StructureMap", "Questionnaire", "OperationDefinition","ActorDefinition","Requirements")) {
+					if (this.lazyLoadPackageResources) {
+						count = registerResourcesLazily(pi, npm.fhirVersion(), packageInfo);
+						log.info("Registered " + count + " conformance resources lazily for package " + pi.name() + "#" + pi.version());
+						return null;
+					}
+					for (String s : pi.listResources(CONFORMANCE_RESOURCE_TYPES)) {
 						++count;
 						Resource r = null;
 						try {
