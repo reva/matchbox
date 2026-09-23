@@ -58,8 +58,8 @@ you anything about the server. Optimise against that one.
 seconds alongside the load.
 
 Each run writes `results/<timestamp>-<target>-<scenario>/` containing the raw
-`.jtl`, the JMeter HTML report, `jmeter.log` and `summary.json`, and appends a
-row to `results/history.csv`. That file is the tuning log: it records
+`.jtl`, the JMeter HTML report and `jmeter.log`, and appends a row to
+`results/history.csv`. That file is the tuning log: it records
 `java_opts`, `cpus`, `threads`, the requested rate, the IG version and the
 matchbox version next to the results, so runs stay comparable.
 
@@ -87,14 +87,21 @@ after changing code. The Angular frontend is not part of that build.
 Edit `targets/local.env`:
 
 ```sh
-JAVA_OPTS="-Xmx4g -Xms4g -XX:+UseG1GC"
-CPUS=4
-MEM_LIMIT=6g
+JAVA_OPTS="${JAVA_OPTS:--Xmx4g -Xms4g -XX:+UseG1GC}"
+CPUS="${CPUS:-4}"
+MEM_LIMIT="${MEM_LIMIT:-6g}"
 ```
 
-then rerun the same scenario and diff the history rows. `cpus` is pinned so
-results are comparable across machines and so you can measure how throughput
-scales with cores, which matters because validation is CPU bound.
+then rerun the same scenario and diff the history rows. All three can also be
+set per run from the environment, which is how you sweep one knob:
+
+```bash
+CPUS=8 ./run.sh --target local --scenario steady --rate 0
+```
+
+`cpus` is pinned so results are comparable across machines and so you can
+measure how throughput scales with cores. It scales cleanly to about four; see
+the findings below for where it stops.
 
 Matchbox caches the IG dependency tree it downloads from packages2.fhir.org in
 its H2 database, which is kept in a named volume between runs. The first run of
@@ -286,6 +293,12 @@ that file changes upstream, update this one, otherwise you are benchmarking a
 configuration you do not ship. Note that `txServer` points the instance at
 itself, so terminology lookups are in-process and part of what you are
 measuring.
+
+## Dependencies
+
+JMeter, Docker, and a POSIX shell with `awk` and `sort`. Nothing else: the
+aggregation in `summarize.sh` is plain awk, matching the rest of the repository,
+which has no Python sources of its own.
 
 ## The older memory profiling plan
 

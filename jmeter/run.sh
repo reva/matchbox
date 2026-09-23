@@ -117,12 +117,12 @@ esac
 # threads at a 1/s target measured 2.3/s at six times the real latency. Size
 # the pool to the rate unless the caller insisted on a number.
 threads_for_rate() {
-  local rate="$1" n
-  n="$(python3 -c "
-import math
-r = float('$rate')
-print(64 if r <= 0 else max(2, min(64, math.ceil(r * 4))))")"
-  echo "$n"
+  awk -v r="$1" 'BEGIN {
+    if (r <= 0) { print 64; exit }
+    n = int(r * 4); if (n < r * 4) n++
+    if (n < 2) n = 2; if (n > 64) n = 64
+    print n
+  }'
 }
 
 # Accept 5m / 90s / 300
@@ -300,11 +300,7 @@ run_once() {
   # The timer works in requests per minute and cannot express "no limit", so
   # unthrottled is just a rate the server will never keep up with.
   local rpm
-  if [ "${rate%%.*}" -le 0 ] 2>/dev/null; then
-    rpm=6000000
-  else
-    rpm="$(python3 -c "print(float('$rate') * 60)")"
-  fi
+  rpm="$(awk -v r="$rate" 'BEGIN { print (r <= 0) ? 6000000 : r * 60 }')"
 
   local props=(
     "-Jhost=$HOST"
@@ -352,30 +348,22 @@ run_once() {
     "$JMETER_CMD" "${args[@]}"
   fi
 
-  python3 summarize.py "$dir/run.jtl" \
-    --out "$dir" \
-    --history results/history.csv \
-    --meta "timestamp=$STAMP" \
-    --meta "target=$TARGET_NAME" \
-    --meta "scenario=$tag" \
-    --meta "profile_key=$PROFILE_KEY" \
-    --meta "rate=$rate" \
-    --meta "duration=$DURATION" \
-    --meta "threads=$THREADS" \
-    --meta "java_opts=${JAVA_OPTS:-}" \
-    --meta "cpus=${CPUS:-}" \
-    --meta "ig_version=$IG_VERSION"
+  LT_TIMESTAMP="$STAMP" LT_TARGET="$TARGET_NAME" LT_SCENARIO="$tag" \
+  LT_PROFILE_KEY="$PROFILE_KEY" LT_RATE="$rate" LT_DURATION="$DURATION" \
+  LT_THREADS="$THREADS" LT_JAVA_OPTS="${JAVA_OPTS:-}" LT_CPUS="${CPUS:-}" \
+  LT_IG_VERSION="$IG_VERSION" \
+    ./summarize.sh "$dir/run.jtl" "$dir" results/history.csv
 
   LAST_DIR="$dir"
 }
 
+# True when the last history row breached a ramp threshold. Falls back to the
+# HTTP percentile when the server reported no validation time.
 breached() {
-  python3 - "$1" "$RAMP_P95_MS" "$RAMP_ERROR_RATE" <<'PY'
-import json, sys
-s = json.load(open(sys.argv[1] + "/summary.json"))
-p95 = s["validation_ms"]["p95"] or s["http_ms"]["p95"] or 0
-sys.exit(0 if (p95 > float(sys.argv[2]) or s["error_rate"] > float(sys.argv[3])) else 1)
-PY
+  awk -F, -v maxp95="$RAMP_P95_MS" -v maxerr="$RAMP_ERROR_RATE" '
+    NR > 1 { err = $14; p95 = ($20 != "" ? $20 : $17) }
+    END { exit (p95 > maxp95 || err > maxerr) ? 0 : 1 }
+  ' results/history.csv
 }
 
 if [ "$SCENARIO" = "ramp" ]; then
@@ -391,16 +379,12 @@ if [ "$SCENARIO" = "ramp" ]; then
   done
   echo
   echo "Ramp results:"
-  python3 - <<'PY'
-import csv, pathlib
-rows = [r for r in csv.DictReader(open("results/history.csv")) if r["scenario"].startswith("ramp-")]
-rows = rows[-20:]
-print(f"  {'rate/s':>7} {'achieved':>9} {'val p50':>8} {'val p95':>8} {'errors':>7}")
-for r in rows:
-    print(f"  {r['requested_rate_per_s']:>7} {float(r['achieved_rps']):>9.2f} "
-          f"{r['validation_p50'] or '-':>8} {r['validation_p95'] or '-':>8} "
-          f"{float(r['error_rate'])*100:>6.2f}%")
-PY
+  awk -F, -v stamp="$STAMP" '
+    BEGIN { printf "  %7s %9s %8s %8s %7s\n", "rate/s", "achieved", "val p50", "val p95", "errors" }
+    NR > 1 && $1 == stamp && $3 ~ /^ramp-/ {
+      printf "  %7s %9.2f %8s %8s %6.2f%%\n", $10, $15, ($19 == "" ? "-" : $19), ($20 == "" ? "-" : $20), $14 * 100
+    }
+  ' results/history.csv
 else
   run_once "$RATE" "$SCENARIO"
 fi
