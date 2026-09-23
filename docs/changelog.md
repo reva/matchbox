@@ -1,3 +1,8 @@
+- Avoid a discarded R5-to-R4 conversion on the validation path: `MatchboxEngineSupport.getMatchboxEngine()` only
+  needed to know whether a canonical resolves, but called `MatchboxEngine.getCanonicalResource()`, which converts
+  the resource to the requested FHIR version before returning it, and then used the result solely as a null check.
+  Added `MatchboxEngine.hasCanonicalResource()` for that check. Measured throughput on a CH ELM workload was
+  unchanged, so this removes dead work rather than a bottleneck
 - Honour `JAVA_OPTS` in the server image: the entrypoint hardcoded `-Xmx12g`, so the heap could not be changed and
   ignored the container memory limit, and no garbage collector could be selected. The default is unchanged when
   `JAVA_OPTS` is not set. The entrypoint now also `exec`s the JVM, so it is PID 1 and receives `SIGTERM` from
