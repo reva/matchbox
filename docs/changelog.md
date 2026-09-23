@@ -1,3 +1,7 @@
+- Honour `JAVA_OPTS` in the server image: the entrypoint hardcoded `-Xmx12g`, so the heap could not be changed and
+  ignored the container memory limit, and no garbage collector could be selected. The default is unchanged when
+  `JAVA_OPTS` is not set. The entrypoint now also `exec`s the JVM, so it is PID 1 and receives `SIGTERM` from
+  `docker stop`; previously the shell held PID 1 and the JVM was killed without running its shutdown hooks
 - Add a load test for `$validate` in `jmeter/`: arrival rate driven scenarios (smoke, steady, ramp) that can target a
   locally built matchbox, the published matchbox-ch-elm image, or a remote instance with mutual TLS, reporting the
   server side validation time separately from HTTP latency and recording each run in a comparable history file
