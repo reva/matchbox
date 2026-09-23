@@ -21,6 +21,7 @@ BUILD=0
 KEEP_UP=0
 ALLOW_REAL=0
 FRESH=0
+EXTRA_PARAMS=""
 RAMP_STEPS="1,2,4,8,16,32"
 RAMP_P95_MS=5000
 RAMP_ERROR_RATE=0.02
@@ -40,6 +41,7 @@ usage() {
   --warmup N             warmup iterations excluded from results
   --metrics on|off|auto  sample actuator heap and cpu               (default: from target)
   --ramp-steps LIST      comma separated rates for the ramp scenario
+  --params STR           extra query string appended to $validate, e.g. '&ig=pkg%23ver'
   --build                rebuild matchbox.jar before starting the local container
   --keep-up              leave the container running after the run
   --fresh                drop the cached IG package database first (slow cold start)
@@ -59,6 +61,7 @@ while [ $# -gt 0 ]; do
     --warmup)        WARMUP="$2"; shift 2 ;;
     --metrics)       METRICS="$2"; shift 2 ;;
     --ramp-steps)    RAMP_STEPS="$2"; shift 2 ;;
+    --params)        EXTRA_PARAMS="$2"; shift 2 ;;
     --build)         BUILD=1; shift ;;
     --keep-up)       KEEP_UP=1; shift ;;
     --fresh)         FRESH=1; shift ;;
@@ -313,6 +316,7 @@ run_once() {
     "-Jrampup=$RAMPUP"
     "-Jwarmup=$WARMUP"
     "-Jmetrics=$METRICS"
+    "-Jextraparams=$EXTRA_PARAMS"
     "-Jjtl=$dir/run.jtl"
     "${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"}"
   )

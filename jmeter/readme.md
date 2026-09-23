@@ -223,6 +223,57 @@ The same tarball is placed in `compose/ig/` and loaded by the local server, so
 the payloads and the server always come from one IG version.
 `extract-payloads.sh` warns if `compose/application.yaml` pins a different one.
 
+## Findings from the first tuning pass
+
+Measured on an M-series Mac, 10 cores, Docker limited to 4 CPUs for matchbox,
+CH ELM 1.15.1, profile `PublishDocumentReferenceStrict`, unthrottled for 90s
+after warmup. Every configuration was a fresh container so that JVM pool sizes
+match the CPU quota.
+
+| Configuration      | runs | mean req/s | range        | mean p95 | heap peak |
+|--------------------|-----:|-----------:|--------------|---------:|----------:|
+| 4 cpu, 4g, G1      |    4 |      15.43 | 13.27–16.98  |  2907 ms |   3.6 GiB |
+| 4 cpu, 4g, Parallel|    4 |  **19.84** | 17.75–22.16  |**1586 ms**|  2.7 GiB |
+| 4 cpu, 4g, ZGC     |    1 |       7.20 |              |  5951 ms |   4.0 GiB |
+| 8 cpu, 4g, G1      |    1 |      14.56 |              |  3470 ms |   3.6 GiB |
+| 4 cpu, 8g, G1      |    1 |      14.59 |              |  3618 ms |   7.0 GiB |
+
+**Use ParallelGC.** The G1 and Parallel ranges do not overlap over four runs
+each: 29% more throughput, 45% lower p95, and less heap. This is the single
+largest effect found, and it is one flag.
+
+**Validation is allocation bound past about four cores, not CPU bound.**
+Throughput scales cleanly from 1 to 4 cores (2.65, 6.49, 16.41 req/s, so
+roughly 4 validations per second per core), then stops: 8 cores measured 14.56,
+inside the 4 core range. That the collector choice moves throughput by 29% while
+doubling the cores moves it by nothing points at allocation and GC as the
+constraint. Size instances at about four cores and scale out rather than up.
+
+**More heap does not help.** 4g to 8g changed throughput by nothing measurable
+and made p99 worse (4386 to 7711 ms). Peak usage is 2.7–3.7 GiB under a 4g cap,
+so the heap was never the constraint.
+
+**One hypothesis tested and rejected.** `MatchboxEngineSupport.getMatchboxEngine`
+is `synchronized` on a singleton, and for a request without an `ig` parameter it
+calls `MatchboxEngine.getCanonicalResource` inside that lock, which does two
+`fetchResource` calls plus a full R5 to R4 conversion of the profile and then
+discards the converted resource, since the result is only used as a null check.
+Passing `ig` skips that branch entirely. It made no difference (19.82 against
+19.84 req/s over two runs), so the conversion is wasted work but not the
+throughput ceiling. Reproduce with:
+
+```bash
+./run.sh --target local --scenario steady --rate 0 \
+  --params '&ig=ch.fhir.ig.ch-elm%231.15.1'
+```
+
+Engine caching is working: every request in a run reports the same `sessionId`,
+so no engine is built per request.
+
+Caveat on all of the above: the load generator runs on the same machine as the
+server, so absolute numbers are not production figures. The comparisons between
+configurations are the useful part.
+
 ## Interpreting results
 
 Single runs are noisy. On a laptop with other containers running, back-to-back

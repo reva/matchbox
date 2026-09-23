@@ -190,7 +190,7 @@ if (!ok) {
                 </elementProp>
               </collectionProp>
             </elementProp>
-            <stringProp name="HTTPSampler.path">${host}/fhir/$validate?profile=${__urlencode(${profile})}</stringProp>
+            <stringProp name="HTTPSampler.path">${host}/fhir/$validate?profile=${__urlencode(${profile})}${__P(extraparams,)}</stringProp>
             <stringProp name="HTTPSampler.method">POST</stringProp>
             <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
@@ -228,7 +228,7 @@ if (!ok) {
               </elementProp>
             </collectionProp>
           </elementProp>
-          <stringProp name="HTTPSampler.path">${host}/fhir/$validate?profile=${__urlencode(${profile})}</stringProp>
+          <stringProp name="HTTPSampler.path">${host}/fhir/$validate?profile=${__urlencode(${profile})}${__P(extraparams,)}</stringProp>
           <stringProp name="HTTPSampler.method">POST</stringProp>
           <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
