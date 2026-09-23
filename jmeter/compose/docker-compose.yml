@@ -12,11 +12,8 @@
 #   docker compose --profile local up --build -d
 #   docker compose --profile local down -v
 #
-# Note on the entrypoint override below: matchbox-server/Dockerfile hardcodes
-# "java -Xmx12g ..." and ignores JAVA_OPTS, so a JAVA_OPTS env var on the
-# container has no effect and the heap ignores mem_limit. Both services
-# therefore replace the entrypoint with the same command, heap flags taken
-# from JAVA_OPTS. Keep this in sync if the upstream entrypoint changes.
+# The released image predates the entrypoint honouring JAVA_OPTS, so it still
+# needs the override; the locally built image does not.
 
 x-entrypoint: &entrypoint
   entrypoint:
@@ -35,7 +32,6 @@ services:
       context: ../../matchbox-server
       dockerfile: Dockerfile
     container_name: matchbox-loadtest
-    <<: *entrypoint
     ports:
       - "${PORT:-8080}:8080"
     volumes:

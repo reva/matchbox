@@ -108,10 +108,9 @@ its H2 database, which is kept in a named volume between runs. The first run of
 a target pays that download; later ones do not. `--fresh` drops the cache when
 you want a genuine cold start.
 
-Note that `matchbox-server/Dockerfile` hardcodes `java -Xmx12g` and ignores
-`JAVA_OPTS`, which also means the heap ignores the container memory limit.
-`compose/docker-compose.yml` replaces the entrypoint to make `JAVA_OPTS` work.
-If the upstream entrypoint changes, that override needs updating.
+The `released` target uses a published image built before the entrypoint
+honoured `JAVA_OPTS`, so `compose/docker-compose.yml` replaces its entrypoint to
+make the setting take effect. The `local` target needs no such override.
 
 ## Measuring a real instance
 
