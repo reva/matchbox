@@ -99,8 +99,11 @@ matchbox:
 #      onlyOneEngine: true
       # Register conformance resources from packages lazily, parsing each on first use instead of parsing every
       # resource of every package while the engine is built. Measured on CH ELM over three runs each: startup to
-      # readiness 88.0s -> 75.3s and heap after startup 2.38 GiB -> 1.92 GiB, with warm validation latency and
-      # validation findings unchanged. Off by default because it moves parsing to first use.
+      # readiness 88.0s -> 75.3s, with warm validation latency and validation findings unchanged.
+      #
+      # It does not reduce memory as implemented: live heap after a full GC is 1.81 GiB against 1.66 GiB eager,
+      # because each deferred proxy holds the NpmPackage it came from, so the raw package content stays resident
+      # instead of being released after loading. Off by default.
 #      lazyLoadPackageResources: true
 #      igsPreloaded: ch.fhir.ig.ch-core#4.0.0-ballot
       ssrfProtectionEnabled: true
