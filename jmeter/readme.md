@@ -262,6 +262,48 @@ latency for the first part of the run.
 `--rate 0` means unthrottled: the timer is set to a rate the server will never
 reach, so threads run flat out.
 
+### Fixed concurrency
+
+To hold a set number of validations in flight rather than a set arrival rate,
+combine the two:
+
+```bash
+PORT=8081 ./run.sh --target local --scenario steady --rate 0 --threads 10 --duration 60
+```
+
+Ten threads, each sending again as soon as the previous answer arrives, so ten
+validations are in flight at all times. Throughput stops being something you ask
+for and becomes something you measure.
+
+Check it landed: concurrency is throughput times latency, so `16.5 req/s` at a
+`515 ms` p50 is 8.5 in flight, near enough to ten allowing for ramp-up. If that
+product comes out well below your thread count, the client was the bottleneck,
+not the server.
+
+More threads is not more throughput. On a 4 CPU container, 4g heap, G1, CH ELM
+`PublishDocumentReferenceStrict`, 60s unthrottled after warmup:
+
+| threads | req/s | validation p50 | in flight |
+|--------:|------:|---------------:|----------:|
+| 1       |  5.20 |         162 ms |       0.8 |
+| 4       |  16.5 |         195 ms |       3.2 |
+| 10      |  16.5 |         515 ms |       8.5 |
+| 20      |  16.4 |        1086 ms |      17.8 |
+
+The 4 and 10 rows are means of three runs each: 16.70/17.19/15.73 against
+14.73/16.34/18.52. The ranges overlap almost completely, so going from 4 to 10
+threads bought no throughput at all and multiplied latency by 2.6. Past the
+knee, added concurrency becomes queue depth.
+
+Pick the thread count from what you want to learn. Use a number at or below the
+core count to find peak throughput, and a higher one to see how the service
+degrades when callers pile up, which is what a queue backlog looks like in
+production.
+
+Against an instance you did not start, `--rate 0` needs
+`--i-know-this-is-a-real-instance`. It is the heaviest setting here, and the
+guard rail exists for it.
+
 ## Payload corpus
 
 `extract-payloads.sh` fetches the CH ELM package from the FHIR registry and
