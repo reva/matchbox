@@ -12,11 +12,14 @@ cd "$(dirname "$0")"
 TARGET=local
 SCENARIO=steady
 PROFILE_KEY=publish-documentreference-strict
-RATE=""
-DURATION=""
-THREADS=""
-WARMUP=""
-METRICS=""
+# Command line values are kept apart from the target file's, because the target
+# file is sourced into this shell and would otherwise overwrite them.
+# Precedence is: command line, then target file, then scenario default.
+CLI_RATE=""
+CLI_DURATION=""
+CLI_THREADS=""
+CLI_WARMUP=""
+CLI_METRICS=""
 BUILD=0
 KEEP_UP=0
 ALLOW_REAL=0
@@ -55,11 +58,11 @@ while [ $# -gt 0 ]; do
     --target)        TARGET="$2"; shift 2 ;;
     --scenario)      SCENARIO="$2"; shift 2 ;;
     --profile)       PROFILE_KEY="$2"; shift 2 ;;
-    --rate)          RATE="$2"; shift 2 ;;
-    --duration)      DURATION="$2"; shift 2 ;;
-    --threads)       THREADS="$2"; shift 2 ;;
-    --warmup)        WARMUP="$2"; shift 2 ;;
-    --metrics)       METRICS="$2"; shift 2 ;;
+    --rate)          CLI_RATE="$2"; shift 2 ;;
+    --duration)      CLI_DURATION="$2"; shift 2 ;;
+    --threads)       CLI_THREADS="$2"; shift 2 ;;
+    --warmup)        CLI_WARMUP="$2"; shift 2 ;;
+    --metrics)       CLI_METRICS="$2"; shift 2 ;;
     --ramp-steps)    RAMP_STEPS="$2"; shift 2 ;;
     --params)        EXTRA_PARAMS="$2"; shift 2 ;;
     --build)         BUILD=1; shift ;;
@@ -96,7 +99,13 @@ set +a
 TARGET_NAME="${TARGET_NAME:-$(basename "$TARGET_FILE" .env)}"
 HOST="${HOST:?HOST is not set in $TARGET_FILE}"
 COMPOSE_PROFILE="${COMPOSE_PROFILE:-}"
-METRICS="${METRICS:-${METRICS_DEFAULT:-auto}}"
+
+# Command line wins over anything the target file set.
+RATE="${CLI_RATE:-${RATE:-}}"
+DURATION="${CLI_DURATION:-${DURATION:-}}"
+THREADS="${CLI_THREADS:-${THREADS:-}}"
+WARMUP="${CLI_WARMUP:-${WARMUP:-}}"
+METRICS="${CLI_METRICS:-${METRICS:-auto}}"
 
 case "$METRICS" in on|off|auto) ;; *) die "--metrics must be on, off or auto" ;; esac
 
@@ -149,7 +158,10 @@ RAMPUP="${RAMPUP:-$(( DURATION / 6 ))}"
 # --------------------------------------------------------------------------
 is_local_host=0
 case "$HOST" in
-  http://localhost:*|http://127.0.0.1:*|https://localhost:*|https://127.0.0.1:*|http://host.docker.internal:*) is_local_host=1 ;;
+  http://localhost:*|https://localhost:*) is_local_host=1 ;;
+  http://127.0.0.1:*|https://127.0.0.1:*) is_local_host=1 ;;
+  # The alias the JMeter container uses to reach a port published on this host.
+  http://host.docker.internal:*|https://host.docker.internal:*) is_local_host=1 ;;
 esac
 
 if [ "$is_local_host" -eq 0 ] && [ "$ALLOW_REAL" -eq 0 ]; then
@@ -201,21 +213,54 @@ fi
 # --------------------------------------------------------------------------
 # Client certificates and truststore
 # --------------------------------------------------------------------------
+# Only jmeter/ is mounted into the JMeter container, so a keystore outside it
+# exists for this shell but not for the JVM that has to read it.
+#
+# The keystore is also opened here, with the same JVM that JMeter will use,
+# because the failure is otherwise invisible: JMeter logs a warning, carries on
+# without a client certificate, and the server answers 401 or 400. openssl 3
+# writes PKCS12 with PBES2/AES, which JREs older than 8u301 cannot read, and
+# the JMeter images commonly ship Java 8.
+require_keystore() {
+  local var="$1" path="$2" type="$3" pass="$4"
+  [ -f "$path" ] || die "$var not found: $path (paths are relative to jmeter/)"
+  if [ "$JMETER_CMD" = "docker" ]; then
+    case "$path" in
+      /*|../*) die "$var is outside jmeter/ ($path). JMeter runs in a container
+       that only sees this directory, so keep keystores in jmeter/certs/." ;;
+    esac
+    docker run --rm -v "$PWD:/t:ro" -w /t --entrypoint keytool "$JMETER_IMAGE" \
+      -list -keystore "$path" -storetype "$type" -storepass "$pass" >/dev/null 2>&1 && return 0
+  elif command -v keytool >/dev/null 2>&1; then
+    keytool -list -keystore "$path" -storetype "$type" -storepass "$pass" >/dev/null 2>&1 && return 0
+  else
+    return 0  # nothing to check with; JMeter will report its own failure
+  fi
+  die "$var ($path) could not be opened by the JVM that will run JMeter.
+       Either the password is wrong, or the file uses encryption that JVM is too
+       old for. Re-export it with algorithms Java 8 accepts:
+         openssl pkcs12 -export -inkey client.key -in client.crt -out $path \\
+           -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+       or run JMeter on a newer JRE:  JMETER_IMAGE=alpine/jmeter:latest ./run.sh ..."
+}
+
 JAVA_SSL_ARGS=()
 if [ -n "${CLIENT_CERT:-}" ]; then
-  [ -f "$CLIENT_CERT" ] || die "CLIENT_CERT not found: $CLIENT_CERT (relative to jmeter/)"
+  require_keystore CLIENT_CERT "$CLIENT_CERT" "${CLIENT_CERT_TYPE:-PKCS12}" "${CLIENT_CERT_PASSWORD:-}"
   JAVA_SSL_ARGS+=(
     "-Djavax.net.ssl.keyStore=$CLIENT_CERT"
     "-Djavax.net.ssl.keyStoreType=${CLIENT_CERT_TYPE:-PKCS12}"
     "-Djavax.net.ssl.keyStorePassword=${CLIENT_CERT_PASSWORD:-}"
-    # JMeter caches one SSL context per thread. Keep that on so the handshake
-    # is not repeated per request, which would measure TLS, not validation.
-    "-Dhttps.use.cached.ssl.context=true"
+    # JMeter caches one SSL context per thread, so the handshake is paid once
+    # per thread rather than per request. This is its default; set it
+    # explicitly because the whole measurement depends on it. It is a JMeter
+    # property, not a system property, hence -J.
+    "-Jhttps.use.cached.ssl.context=true"
   )
   echo "Client certificate: $CLIENT_CERT (${CLIENT_CERT_TYPE:-PKCS12})"
 fi
 if [ -n "${CA_TRUSTSTORE:-}" ]; then
-  [ -f "$CA_TRUSTSTORE" ] || die "CA_TRUSTSTORE not found: $CA_TRUSTSTORE (relative to jmeter/)"
+  require_keystore CA_TRUSTSTORE "$CA_TRUSTSTORE" "${CA_TRUSTSTORE_TYPE:-PKCS12}" "${CA_TRUSTSTORE_PASSWORD:-}"
   JAVA_SSL_ARGS+=(
     "-Djavax.net.ssl.trustStore=$CA_TRUSTSTORE"
     "-Djavax.net.ssl.trustStoreType=${CA_TRUSTSTORE_TYPE:-PKCS12}"
@@ -357,11 +402,20 @@ run_once() {
   LAST_DIR="$dir"
 }
 
+# history.csv columns are looked up by name, so adding a column to summarize.sh
+# does not silently shift what the ramp logic reads.
+hcol() {
+  awk -F, -v want="$1" '
+    NR == 1 { for (i = 1; i <= NF; i++) if ($i == want) { print i; exit } }
+  ' results/history.csv
+}
+
 # True when the last history row breached a ramp threshold. Falls back to the
 # HTTP percentile when the server reported no validation time.
 breached() {
-  awk -F, -v maxp95="$RAMP_P95_MS" -v maxerr="$RAMP_ERROR_RATE" '
-    NR > 1 { err = $14; p95 = ($20 != "" ? $20 : $17) }
+  awk -F, -v maxp95="$RAMP_P95_MS" -v maxerr="$RAMP_ERROR_RATE" \
+      -v ec="$(hcol error_rate)" -v vc="$(hcol validation_p95)" -v hc="$(hcol http_p95)" '
+    NR > 1 { err = $ec; p95 = ($vc != "" ? $vc : $hc) }
     END { exit (p95 > maxp95 || err > maxerr) ? 0 : 1 }
   ' results/history.csv
 }
@@ -372,17 +426,21 @@ if [ "$SCENARIO" = "ramp" ]; then
   IFS=',' read -r -a steps <<< "$RAMP_STEPS"
   for step in "${steps[@]}"; do
     run_once "$step" "ramp-${step}rps"
-    if breached "$LAST_DIR"; then
+    if breached; then
       echo "Threshold breached at ${step} req/s. Stopping the ramp."
       break
     fi
   done
   echo
   echo "Ramp results:"
-  awk -F, -v stamp="$STAMP" '
+  awk -F, -v stamp="$STAMP" \
+      -v tc="$(hcol timestamp)" -v sc="$(hcol scenario)" -v rc="$(hcol requested_rate_per_s)" \
+      -v ac="$(hcol achieved_rps)" -v p50c="$(hcol validation_p50)" \
+      -v p95c="$(hcol validation_p95)" -v ec="$(hcol error_rate)" '
     BEGIN { printf "  %7s %9s %8s %8s %7s\n", "rate/s", "achieved", "val p50", "val p95", "errors" }
-    NR > 1 && $1 == stamp && $3 ~ /^ramp-/ {
-      printf "  %7s %9.2f %8s %8s %6.2f%%\n", $10, $15, ($19 == "" ? "-" : $19), ($20 == "" ? "-" : $20), $14 * 100
+    NR > 1 && $tc == stamp && $sc ~ /^ramp-/ {
+      printf "  %7s %9.2f %8s %8s %6.2f%%\n", $rc, $ac,
+             ($p50c == "" ? "-" : $p50c), ($p95c == "" ? "-" : $p95c), $ec * 100
     }
   ' results/history.csv
 else

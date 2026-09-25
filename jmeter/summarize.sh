@@ -110,8 +110,23 @@ END {
 # produced nothing, and so it is visible where these come from.
 total=0; failed=0; first=0; last=0; heap=0
 versions=unknown; codes=; sessions=0; readycode=; readymsg=
-# shellcheck disable=SC1091  # generated above, not a checked-in file
-. "$work/counters"
+
+# Read rather than source. The values come from the server: responseMessage is
+# "Bad Request" and the like, which sourcing would run as a command.
+while IFS='=' read -r key value; do
+	case "$key" in
+		total)     total="$value" ;;
+		failed)    failed="$value" ;;
+		first)     first="$value" ;;
+		last)      last="$value" ;;
+		heap)      heap="$value" ;;
+		versions)  versions="$value" ;;
+		codes)     codes="$value" ;;
+		sessions)  sessions="$value" ;;
+		readycode) readycode="$value" ;;
+		readymsg)  readymsg="$value" ;;
+	esac
+done < "$work/counters"
 
 if [ "$total" -eq 0 ]; then
 	if [ -n "$readycode" ]; then
@@ -119,6 +134,13 @@ if [ "$total" -eq 0 ]; then
 		# load was sent. Say that rather than "no samples".
 		echo "the target did not respond to GET /fhir/metadata, so the test stopped before sending any load:" >&2
 		echo "  $readycode $readymsg" >&2
+		case "$readycode" in
+			400|401|403)
+				echo "  a rejection this early usually means the client was not authenticated." >&2
+				echo "  If the target needs mutual TLS, check CLIENT_CERT in the target file and" >&2
+				echo "  the SSLManager lines in jmeter.log, which say whether the keystore loaded." >&2
+				;;
+		esac
 	else
 		echo "no \$validate samples in the jtl" >&2
 	fi

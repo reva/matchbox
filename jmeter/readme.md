@@ -68,6 +68,10 @@ matchbox version next to the results, so runs stay comparable.
 A target is an env file in `targets/`. `--target NAME` resolves
 `targets/NAME.env`; a path is also accepted.
 
+The target file is sourced, so anything it sets acts as a default for that
+target. Command line flags win over it, and a scenario default applies only when
+neither set a value: **command line, then target file, then scenario default.**
+
 | Target     | What it is                                  | Tunable |
 |------------|---------------------------------------------|---------|
 | `local`    | built from this working tree, CH ELM loaded | yes     |
@@ -143,7 +147,8 @@ Read this before you do it:
 
 ### Mutual TLS
 
-Set these in the target file. Paths are relative to `jmeter/`.
+Set these in the target file. Paths are relative to `jmeter/`, and must stay
+inside it: JMeter runs in a container that only mounts this directory.
 
 ```sh
 CLIENT_CERT=certs/client.p12
@@ -163,13 +168,34 @@ Building the keystores from PEM files:
 
 ```bash
 openssl pkcs12 -export -inkey client.key -in client.crt \
-  -out certs/client.p12 -name client
+  -out certs/client.p12 -name client \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
 ```
 
 ```bash
 keytool -importcert -noprompt -alias ca -file ca.pem \
   -keystore certs/truststore.p12 -storetype PKCS12 -storepass changeit
 ```
+
+The `-keypbe`/`-certpbe`/`-macalg` arguments are not decoration. OpenSSL 3
+defaults to PBES2 with AES-256, which a JRE older than 8u301 cannot read, and
+the default JMeter image ships Java 8u275. Without them JMeter logs a warning,
+carries on with no client certificate, and the server answers 400 or 401, which
+looks like a server problem rather than a keystore one. `run.sh` opens both
+keystores with that same JVM before starting a run and refuses to continue if
+either fails, so this shows up as a clear error.
+
+If you are given a `.p12` you cannot re-export, run JMeter on a newer JRE
+instead:
+
+```bash
+JMETER_IMAGE=alpine/jmeter:latest ./run.sh --target targets/prod.private.env --scenario smoke
+```
+
+That image is JMeter 5.6.3 on Java 8u492 and is also native on arm64, so it
+does not run under emulation. It is not the default only because the committed
+findings were measured with `justb4/jmeter:5.5`, and the load generator is part
+of what those numbers reflect.
 
 The TLS session is cached per thread, so the handshake cost is paid once per
 thread rather than per request. Otherwise you would be measuring TLS.
@@ -180,6 +206,39 @@ thread rather than per request. Otherwise you would be measuring TLS.
 AUTH_HEADER_NAME=Authorization
 AUTH_HEADER_VALUE=Bearer eyJ...
 ```
+
+### First run against a new instance
+
+Work up in three steps rather than starting from a scenario that sends load.
+
+```bash
+# 1. Does it answer at all, and does the client certificate work?
+./run.sh --target targets/ref.private.env --scenario smoke --rate 1 --duration 30
+```
+
+A failure here stops before any load is sent and prints the response code.
+`400`, `401` or `403` means authentication, not capacity.
+
+```bash
+# 2. Is the corpus the right one?
+```
+
+The payloads have to match the IG the instance actually serves, otherwise you
+are measuring validation failures. `response codes  200=n` with no failures is
+the check; `CHELM_VERSION=x.y.z ./extract-payloads.sh` rebuilds the corpus
+against a different release.
+
+```bash
+# 3. A real measurement.
+./run.sh --target targets/ref.private.env --scenario steady --rate 2 --duration 5m
+```
+
+Anything above 2/s needs `--i-know-this-is-a-real-instance`. Agree that with
+whoever operates the instance first; on a shared environment your numbers
+include their traffic and vice versa.
+
+Compare `validation_p50` across runs, not `achieved_rps`: against a throttled
+remote target throughput only tells you the timer worked.
 
 ## Scenarios
 
@@ -248,8 +307,8 @@ match the CPU quota.
 each: 29% more throughput, 45% lower p95, and less heap. This is one flag.
 
 The reason is not the obvious one. With `-Xlog:gc` captured over the same load
-window (`findings/gc-g1.log`, `findings/gc-parallelgc.log`), ParallelGC pauses
-roughly twice as much as G1:
+window (see `findings/readme.md` to regenerate it), ParallelGC pauses roughly
+twice as much as G1:
 
 | | G1 | Parallel |
 |---------------------|--------:|---------:|
