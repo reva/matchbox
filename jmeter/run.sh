@@ -192,13 +192,39 @@ IG_VERSION="$(cat payloads/.ig-version 2>/dev/null || echo unknown)"
 # JMeter
 # --------------------------------------------------------------------------
 JMETER_IMAGE="${JMETER_IMAGE:-justb4/jmeter:5.5}"
-JMETER_CMD=""
+# Heap for the load generator, matching what JMeter's own bin/jmeter sets. Only
+# used when this script starts the JVM itself.
+JMETER_JAVA_OPTS="${JMETER_JAVA_OPTS:--Xms1g -Xmx1g}"
+
+# JMeter's wrapper script cannot cope with a space in its own path: it fails
+# with "Could not find or load main class Files...". A Windows install under
+# C:\Program Files is the usual way to meet that, so take the jar route there.
+jmeter_wrapper_usable=0
 if [ -n "${JMETER_HOME:-}" ] && [ -x "$JMETER_HOME/bin/jmeter" ]; then
-  JMETER_CMD="$JMETER_HOME/bin/jmeter"
+  jmeter_wrapper_usable=1
+  case "$JMETER_HOME" in *\ *) jmeter_wrapper_usable=0 ;; esac
+fi
+
+JMETER_CMD=""
+JMETER_RUN=()
+if [ "$jmeter_wrapper_usable" -eq 1 ]; then
+  JMETER_CMD=script
+  JMETER_RUN=("$JMETER_HOME/bin/jmeter")
+elif [ -n "${JMETER_HOME:-}" ] && [ -f "$JMETER_HOME/bin/ApacheJMeter.jar" ] \
+     && command -v java >/dev/null 2>&1; then
+  # The wrapper only sets up a JVM, so start it here instead. This is the path
+  # for a machine that has java and an unpacked JMeter but cannot use the
+  # wrapper: Windows, an archive extracted without the executable bit, or a
+  # path containing a space.
+  JMETER_CMD=java
+  # shellcheck disable=SC2206  # JMETER_JAVA_OPTS is several options in one string
+  JMETER_RUN=(java $JMETER_JAVA_OPTS -jar "$JMETER_HOME/bin/ApacheJMeter.jar")
+  echo "Using java -jar $JMETER_HOME/bin/ApacheJMeter.jar"
 elif command -v jmeter >/dev/null 2>&1; then
-  JMETER_CMD="$(command -v jmeter)"
+  JMETER_CMD=script
+  JMETER_RUN=("$(command -v jmeter)")
 elif command -v docker >/dev/null 2>&1; then
-  JMETER_CMD="docker"
+  JMETER_CMD=docker
   echo "No local JMeter, using $JMETER_IMAGE."
   # Inside the container, the host's published ports are not on localhost.
   case "$HOST" in
@@ -207,7 +233,8 @@ elif command -v docker >/dev/null 2>&1; then
       ;;
   esac
 else
-  die "no JMeter found. Install it, set JMETER_HOME, or install Docker."
+  die "no JMeter found. Unpack Apache JMeter and set JMETER_HOME, put jmeter on
+       PATH, or install Docker."
 fi
 
 # --------------------------------------------------------------------------
@@ -390,7 +417,7 @@ run_once() {
       -u "$(id -u):$(id -g)" \
       "$JMETER_IMAGE" "${args[@]}"
   else
-    "$JMETER_CMD" "${args[@]}"
+    "${JMETER_RUN[@]}" "${args[@]}"
   fi
 
   LT_TIMESTAMP="$STAMP" LT_TARGET="$TARGET_NAME" LT_SCENARIO="$tag" \

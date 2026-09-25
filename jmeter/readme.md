@@ -394,9 +394,78 @@ measuring.
 
 ## Dependencies
 
-JMeter, Docker, and a POSIX shell with `awk` and `sort`. Nothing else: the
-aggregation in `summarize.sh` is plain awk, matching the rest of the repository,
-which has no Python sources of its own.
+A POSIX shell with `awk` and `sort`, plus JMeter. Nothing else: the aggregation
+in `summarize.sh` is plain awk, matching the rest of the repository, which has
+no Python sources of its own.
+
+Docker is needed only for the `local` and `released` targets, because it is what
+starts the matchbox container. Measuring an instance you did not start needs no
+Docker at all, as long as JMeter itself can run without it.
+
+JMeter is resolved in this order:
+
+| | Used when |
+|---|---|
+| `$JMETER_HOME/bin/jmeter` | `JMETER_HOME` is set and the wrapper is executable |
+| `java -jar $JMETER_HOME/bin/ApacheJMeter.jar` | `JMETER_HOME` is set but the wrapper is not executable |
+| `jmeter` from `PATH` | neither of the above |
+| `$JMETER_IMAGE` in Docker | no local JMeter at all |
+
+The second row means an unpacked JMeter archive and a `java` on `PATH` are
+enough. `JMETER_JAVA_OPTS` sets the load generator's heap, default `-Xms1g
+-Xmx1g`, the same as JMeter's own wrapper.
+
+### Running on Windows
+
+Use Git Bash, which ships with Git for Windows and provides `bash`, `awk`,
+`sort`, `curl` and `tar`, or use WSL. Download and unpack Apache JMeter, then:
+
+```bash
+export JMETER_HOME=/c/tools/apache-jmeter-5.6.3
+./run.sh --target targets/ref.private.env --scenario smoke --rate 1
+```
+
+There is no need to make `bin/jmeter` executable: an archive extracted on
+Windows usually loses the bit, and `run.sh` falls back to starting
+`ApacheJMeter.jar` with `java` directly. An install under `C:\Program Files`
+takes the same fallback, because JMeter's wrapper script fails on a space in its
+own path with `Could not find or load main class Files...`.
+
+Both fallbacks are tested; running on Windows itself is not, so treat this as
+the expected route rather than a verified one.
+
+#### Without any POSIX shell
+
+`run.sh` and `summarize.sh` will not run under `cmd` or PowerShell. JMeter
+itself will, so drive it directly. Build the payload corpus once on any machine
+that has a shell, copy `payloads/` across, and then:
+
+```
+java -jar %JMETER_HOME%\bin\ApacheJMeter.jar ^
+  -n -t loadtest.jmx -q user.properties ^
+  -l run.jtl -j jmeter.log -e -o report ^
+  -Jhost=https://matchbox.example.ch/matchboxv3 ^
+  -Jprofile=http://fhir.ch/ig/ch-elm/StructureDefinition/PublishDocumentReferenceStrict ^
+  -Jpayloadindex=payloads/publish-documentreference-strict.csv ^
+  -Jrpm=60 -Jduration=300 -Jthreads=4 -Jrampup=10 -Jwarmup=2 -Jmetrics=off ^
+  -Djavax.net.ssl.keyStore=certs/client.p12 ^
+  -Djavax.net.ssl.keyStoreType=PKCS12 ^
+  -Djavax.net.ssl.keyStorePassword=...
+```
+
+Run it from this directory: `payloadindex` and the paths inside it are relative
+to the working directory. `rpm` is the arrival rate per minute, so 60 is 1/s;
+there is no "unlimited", so use a number the server cannot reach.
+
+You then read `report/index.html` instead of the printed summary. What you lose
+is the server side `validation ms`, which is the number worth optimising against
+on a remote instance, and the `history.csv` row that makes runs comparable. Both
+come from `summarize.sh`, so run the `.jtl` through it later on a machine that
+has a shell:
+
+```bash
+LT_TARGET=ref LT_SCENARIO=steady ./summarize.sh run.jtl . history.csv
+```
 
 ## The older memory profiling plan
 
