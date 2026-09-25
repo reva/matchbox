@@ -169,7 +169,15 @@ if [ "$is_local_host" -eq 0 ] && [ "$ALLOW_REAL" -eq 0 ]; then
     die "ramp deliberately drives a target to its knee. $HOST is not localhost.
        If you really mean to do that to this instance, pass --i-know-this-is-a-real-instance"
   fi
-  if [ "${RATE%%.*}" -gt 2 ] 2>/dev/null; then
+  # Compared as decimals, and 0 checked first: --rate 0 is unthrottled, the
+  # heaviest setting there is, and its integer part would otherwise pass a
+  # "greater than 2" test.
+  if [ "$(awk -v r="$RATE" 'BEGIN { print (r <= 0) ? 1 : 0 }')" -eq 1 ]; then
+    die "--rate 0 is unthrottled: every thread sends again the moment the
+       previous answer arrives. $HOST is not localhost. Give it a real rate,
+       or pass --i-know-this-is-a-real-instance"
+  fi
+  if [ "$(awk -v r="$RATE" 'BEGIN { print (r > 2) ? 1 : 0 }')" -eq 1 ]; then
     die "rate $RATE/s against a non-localhost host ($HOST).
        Keep it at 2/s or below, or pass --i-know-this-is-a-real-instance"
   fi
