@@ -26,6 +26,12 @@
   OID to URI mapping of `http://hl7.org/fhir/ConceptMap/special-oid2uri` in transformations
   ([#664](https://github.com/ahdis/matchbox/issues/664))
 
+- Avoid a discarded R5-to-R4 conversion on the validation path: `MatchboxEngineSupport.getMatchboxEngine()` only
+  needed to know whether a canonical resolves, but called `MatchboxEngine.getCanonicalResource()`, which converts
+  the resource to the requested FHIR version before returning it, and then used the result solely as a null check.
+  Added `MatchboxEngine.hasCanonicalResource()` for that check. Measured throughput on a CH ELM workload was
+  unchanged, so this removes dead work rather than a bottleneck
+
 2026/10/05 Release 4.1.21
 
 - Upgrade `piscina` (used by `@angular/build` of the frontend build) to 5.3.2 with an npm override to fix
