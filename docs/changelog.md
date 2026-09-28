@@ -1,5 +1,10 @@
 2026/10/xx Release 4.1.19
 
+- Avoid a discarded R5-to-R4 conversion on the validation path: `MatchboxEngineSupport.getMatchboxEngine()` only
+  needed to know whether a canonical resolves, but called `MatchboxEngine.getCanonicalResource()`, which converts
+  the resource to the requested FHIR version before returning it, and then used the result solely as a null check.
+  Added `MatchboxEngine.hasCanonicalResource()` for that check. Measured throughput on a CH ELM workload was
+  unchanged, so this removes dead work rather than a bottleneck
 - Add a manual workflow (`Create a release`) that creates the tag and the GitHub release of the version in the POM with
   the notes from the changelog, and starts the Docker and Maven Central workflows
 - Tests: replace the fixed 10 s "give the server some time to start up" sleep of the server integration tests with a
@@ -55,6 +60,7 @@
 
 2026/09/21 Release 4.1.17
 
+>>>>>>> 0857df79 (refactor: don't convert a canonical resource just to test that it exists)
 - GUI: browse the FHIR package registry packages2.fhir.org on the IGs page, filtered by package name, FHIR version and
   publication date, mark the installed packages, and install a selected package version (hidden when the server is in
   httpReadOnly mode) (#583)
