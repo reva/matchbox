@@ -95,7 +95,9 @@ public class CanonicalResourceManager<T extends CanonicalResource> {
       this.derivation = derivation;
     }
 
-    public CanonicalResource getResource() throws FHIRException {
+    // matchbox patch: synchronized, a proxy can be shared between several contexts (the copies of the main engine, the
+    // SharedPackageResourcesCache), which have different locks; loadResource() doesn't acquire any other lock
+    public synchronized CanonicalResource getResource() throws FHIRException {
       if (resource == null) {
         resource = loadResource();
         if (hacked) {
@@ -723,6 +725,16 @@ public class CanonicalResourceManager<T extends CanonicalResource> {
     else
       return false;
   }
+
+  // matchbox patch: the version of the resource that get(url) returns, without parsing it if it's a proxy (lazy loading)
+  public String getVersion(String url) {
+    CachedCanonicalResource<T> cr = masterDefinitions.get(url);
+    if (cr == null) {
+      cr = indexedResources.get(url);
+    }
+    return cr == null ? null : cr.getVersion();
+  }
+  // END matchbox patch
 
   public T get(String url) {
     CachedCanonicalResource<T> cr = masterDefinitions.get(url);

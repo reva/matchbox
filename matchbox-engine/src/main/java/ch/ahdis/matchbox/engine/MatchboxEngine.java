@@ -19,6 +19,11 @@ package ch.ahdis.matchbox.engine;
  * limitations under the License.
  * #L%
  */
+import java.util.List;
+import org.hl7.fhir.r5.model.PackageInformation;
+import org.hl7.fhir.r5.context.IContextResourceLoader;
+import ch.ahdis.matchbox.engine.packages.MetadataCoreVersionPinner;
+import ch.ahdis.matchbox.engine.packages.LazyTerminologyLoader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileNotFoundException;
@@ -262,8 +267,7 @@ public class MatchboxEngine extends ValidationEngine {
 			log.info(VersionUtil.getPoweredBy());
 			final MatchboxEngine engine ;
 			try {
-					engine = new MatchboxEngine(
-									new SimpleWorkerContextBuilder().fromPackage(NpmPackage.fromPackage(getClass().getResourceAsStream("/hl7.fhir.r4.core.tgz")), ValidatorUtils.loaderForVersion("4.0.1"), false));
+					engine = new MatchboxEngine(createCoreWorkerContext("/hl7.fhir.r4.core.tgz", "4.0.1"));
 			}
 			catch (final Exception e) { throw new MatchboxEngineCreationException(e); }
 			log.info("loaded hl7.fhir.r4.core#4.0.1 from classpath");
@@ -306,7 +310,7 @@ public class MatchboxEngine extends ValidationEngine {
 			log.info("Initializing Matchbox Engine (FHIR R4B with terminology provided in classpath)");
 			log.info(VersionUtil.getPoweredBy());
 			final MatchboxEngine engine ;
-			try { engine = new MatchboxEngine(new SimpleWorkerContextBuilder().fromPackage(NpmPackage.fromPackage(getClass().getResourceAsStream("/hl7.fhir.r4b.core.tgz")), ValidatorUtils.loaderForVersion("4.3.0"), false));
+			try { engine = new MatchboxEngine(createCoreWorkerContext("/hl7.fhir.r4b.core.tgz", "4.3.0"));
 			}
 			catch (final Exception e) { throw new MatchboxEngineCreationException(e); }
 			log.info("loaded hl7.fhir.r4b.core#4.3.0 from classpath");
@@ -471,12 +475,25 @@ public class MatchboxEngine extends ValidationEngine {
 	}
 
 	public static SimpleWorkerContext createR5WorkerContext() throws IOException {
-		return new SimpleWorkerContextBuilder()
-			.fromPackage(
-				NpmPackage.fromPackage(MatchboxEngine.class.getResourceAsStream("/hl7.fhir.r5.core.tgz")),
-				ValidatorUtils.loaderForVersion("5.0.0"),
-				false
-			);
+		return createCoreWorkerContext("/hl7.fhir.r5.core.tgz", "5.0.0");
+	}
+
+	/**
+	 * Creates a worker context with a FHIR core package from the classpath. Its terminology resources are loaded lazily
+	 * (see {@link LazyTerminologyLoader}) and pinned to the core versions when they're parsed, like
+	 * SimpleWorkerContext.finishLoading() pins them when it parses them all.
+	 */
+	public static SimpleWorkerContext createCoreWorkerContext(final String packageResource,
+																				 final String fhirVersion) throws IOException {
+		final NpmPackage pi = NpmPackage.fromPackage(MatchboxEngine.class.getResourceAsStream(packageResource));
+		final IContextResourceLoader loader = ValidatorUtils.loaderForVersion(fhirVersion);
+		final SimpleWorkerContext context = new SimpleWorkerContextBuilder()
+			.fromPackage(pi, LazyTerminologyLoader.withoutLazyLoadedTypes(loader), false);
+		final MetadataCoreVersionPinner pinner = new MetadataCoreVersionPinner(context);
+		LazyTerminologyLoader.registerProxies(context, pi, new PackageInformation(pi, true), loader, pinner);
+		// finishLoading() pinned the StructureDefinitions before the ValueSets were registered, pin their bindings now
+		pinner.pinCoreVersions(List.of(), List.of(), context.listStructures());
+		return context;
 	}
 
 	/**
@@ -926,6 +943,40 @@ public class MatchboxEngine extends ValidationEngine {
 		return null;
 	}
 
+	/**
+	 * Returns whether a canonical resource is known, without converting it.
+	 *
+	 * {@link #getCanonicalResource(String, String)} converts the resource from R5 to the requested version before
+	 * returning it. Callers that only want to know whether the canonical resolves pay for a conversion whose result
+	 * they discard, on a per-request path. This does the same lookup and reports only whether it succeeded.
+	 *
+	 * The FHIR version is still taken into account: as in {@link #getCanonicalResource(String, String)}, a version
+	 * that cannot be converted to counts as not found.
+	 *
+	 * @param canonical   the canonical URL to look up
+	 * @param fhirVersion the FHIR version the caller would want the resource in
+	 * @return true if the canonical resolves and could be returned for that version
+	 */
+	public boolean hasCanonicalResource(final String canonical, final String fhirVersion) {
+		switch (fhirVersion) {
+			case "4.0.1":
+			case "4.3.0":
+			case "5.0.0":
+				break;
+			default:
+				return false;
+		}
+		final org.hl7.fhir.r5.model.Resource fetched =
+			this.getContext().fetchResource(null, canonical, IWorkerContext.VersionResolutionRules.defaultRule());
+		if (fetched == null) {
+			return false;
+		}
+		// allResourcesById is not package aware (???) so we need to fetch it again
+		return this.getContext().fetchResource(fetched.getClass(),
+															canonical,
+															IWorkerContext.VersionResolutionRules.defaultRule()) != null;
+	}
+
 	// same as above but called from the validator on the meta data type
 	// @Override
 	// public CanonicalResource fetchCanonicalResource(IResourceValidator validator, String url) throws URISyntaxException {
@@ -948,7 +999,7 @@ public class MatchboxEngine extends ValidationEngine {
 	public boolean fetchesCanonicalResource(IResourceValidator validator, String url) {
 		// don't use the fetcher, should we do this better in directly in StandAloneValidatorFetcher implmentation
 		// https://github.com/ahdis/matchbox/issues/67
-		return getCanonicalResource(url,"5.0.0") != null;
+		return hasCanonicalResource(url, "5.0.0");
 	}
 
 	/**
@@ -1104,7 +1155,14 @@ public class MatchboxEngine extends ValidationEngine {
 
 		// Remove the dependencies to disable recursive loading
 		npmPackage.getNpm().set("dependencies", new JsonObject());
-		this.getIgLoader().loadPackage(npmPackage, true);
+		if (npmPackage.isCoreExamples()) {
+			return;
+		}
+		// Like IgLoader.loadPackage(npmPackage, true), but the terminology resources are loaded lazily
+		final IContextResourceLoader loader = ValidatorUtils.loaderForVersion(npmPackage.fhirVersion());
+		this.getContext().loadFromPackage(npmPackage, LazyTerminologyLoader.withoutLazyLoadedTypes(loader));
+		LazyTerminologyLoader.registerProxies(this.getContext(), npmPackage, new PackageInformation(npmPackage, false),
+														  loader, null);
 	}
 
 	/**

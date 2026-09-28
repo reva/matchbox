@@ -1,3 +1,70 @@
+2026/10/xx Release 4.1.19
+
+- Add a load test for `$validate` in `jmeter/`: arrival rate and fixed concurrency scenarios (smoke, steady, ramp)
+  that can target a locally built matchbox, the published matchbox-ch-elm image, or a remote instance with mutual
+  TLS, reporting the server side validation time separately from HTTP latency and recording each run in a
+  comparable history file
+- Document the first load test findings in `jmeter/readme.md`: ParallelGC gives 29% more `$validate` throughput and
+  45% lower p95 than G1 on the same hardware, throughput stops scaling past about four cores, and a larger heap
+  does not help
+- Avoid a discarded R5-to-R4 conversion on the validation path: `MatchboxEngineSupport.getMatchboxEngine()` only
+  needed to know whether a canonical resolves, but called `MatchboxEngine.getCanonicalResource()`, which converts
+  the resource to the requested FHIR version before returning it, and then used the result solely as a null check.
+  Added `MatchboxEngine.hasCanonicalResource()` for that check. Measured throughput on a CH ELM workload was
+  unchanged, so this removes dead work rather than a bottleneck
+- Add a manual workflow (`Create a release`) that creates the tag and the GitHub release of the version in the POM with
+  the notes from the changelog, and starts the Docker and Maven Central workflows
+- Tests: replace the fixed 10 s "give the server some time to start up" sleep of the server integration tests with a
+  readiness check (`ServerStartup`) that waits for the validation engine to be initialized and `/fhir/metadata` to
+  answer. The startup, including the loading of the IGs, is already synchronous, so the check passes immediately and
+  each test class starts about 10 s earlier
+- Make the `initialized` flag of `MatchboxEngineSupport` volatile, as it's polled by request threads
+
+2026/09/26 Release 4.1.18
+
+- Docker: size the heap relative to the memory limit of the container (`-XX:MaxRAMPercentage=70` instead of `-Xmx12g`
+  in the default `JDK_JAVA_OPTIONS`); a memory limit of 4 GB is enough for a typical setup of implementation guides
+  (measured with the 12 IGs of `with-preload`: about 1.3 GB of live heap) (#599)
+- Docker: enable the string deduplication of the garbage collector (`-XX:+UseStringDeduplication`) by default; it
+  reduces the heap used by the ch-elm validation engine by about 15% at no measurable cost in validation time (#597)
+- Don't keep the whole content of a package in memory for the few binaries of its `other` folder: this kept e.g. all
+  files of `hl7.fhir.uv.xver-r5.r4` and `hl7.fhir.r4.core` (about 210 MB) on the heap of the main engine (#597)
+- Load the terminology resources (CodeSystem, ValueSet, NamingSystem, ConceptMap) of the implementation guide packages
+  and their dependencies lazily: they're registered with the metadata of the package index and parsed when they're
+  first used, like the core validator does. For the ch-elm implementation guide, which pulls in 7 versions of
+  `hl7.terminology.r4`, the engine keeps about 225 MB less heap and is created about 6 s faster (#599)
+- Load the terminology resources of the FHIR core package and of the packages from the classpath (hl7.terminology,
+  extensions, xver, CDA) lazily too; the core terminology resources are pinned to the core versions when they're
+  parsed. Another 105 MB less heap and 4–6 s faster startup (#599)
+- Don't make HAPI parse and keep all StructureDefinitions of the FHIR core (about 40 MB for R4) for the FHIRPath engine of
+  the JPA search parameter extractors, which only uses them for its static type analysis (#599)
+- Don't load a package again when a dependency with a wildcard version (e.g. `ch.fhir.ig.ch-term#3.3.x`) resolves to an
+  already loaded version (#599)
+- Share the conformance resources of a package between the validation engines of several IGs that depend on it: an
+  engine registers the resources that another engine has loaded instead of loading and parsing the package again. The
+  cache keeps them only as long as an engine that uses them is alive. With ch-core and ch-epr-fhir, the resources that
+  were loaded in both engines (53 MB) exist once (#599)
+- Update the `with-preload` sample configuration to the latest released versions of its IGs (`ihe.iti.mhd` and
+  `ihe.iti.pixm` replace `ihe.mhd.fhir` and `IHE.ITI.PIXm`, `ch.fhir.ig.ch-epr-fhir` replaces `ch.fhir.ig.ch-epr-mhealth`)
+- Fix the `with-ch` sample configuration, which didn't start since 4.1.12: its local terminology server is reached over
+  http, so it needs `matchbox.fhir.context.ssrfProtectionEnabled: false`
+- Add a JMeter test with several IGs (`jmeter/multi-ig.jmx`) to check which packages the validation engines share (#599)
+- Add a JMeter runbook with the memory and validation time of the ch-elm images from 1.13.1 to 1.15.2
+  (`jmeter/claude-jmeter-check.md`)
+- Docker: the JVM options can be configured with the `JDK_JAVA_OPTIONS` environment variable, which defaults to
+  `-Xmx12g -XX:+ExitOnOutOfMemoryError` (#594)
+- Docker: exit on the first `OutOfMemoryError` (`-XX:+ExitOnOutOfMemoryError`) instead of continuing in an undefined
+  state while the health check still reports UP, so that the container gets restarted (#457)
+- Docker: use the exec form of the entrypoint, so that matchbox receives the stop signal and shuts down gracefully;
+  arguments given to the container are now passed to matchbox as Spring Boot arguments instead of being ignored (#594).
+  Thanks @reva!
+- Fix the Gazelle Validation Service API reporting `PASSED` when nothing could be validated (unknown profile, engine
+  not initialized, engine creation failure): the result is now `UNDEFINED` (#590)
+- Gazelle Validation Service API: reject a request without `validationProfileId` or inputs with a 400 instead of a 500,
+  and answer a request arriving while the engine is not yet initialized with a retryable 503 (#590)
+- Gazelle Validation Service API: send an `ETag` on the profile list (v1 and v2) and answer `If-None-Match` with a
+  `304`, so that a client revalidating the list does not transfer it again (#591)
+
 2026/09/21 Release 4.1.17
 
 - GUI: browse the FHIR package registry packages2.fhir.org on the IGs page, filtered by package name, FHIR version and

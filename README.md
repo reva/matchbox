@@ -32,8 +32,11 @@ The easiest way to run this server entirely depends on your environment requirem
 ## using prebuilt image
 
 ```bash
-docker run -d --name matchbox -p 8080:8080  europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox:v3.9.10 -v /Users/oegger/Documents/github/matchbox/matchbox-server/with-settings:/config matchbox
+docker run -d --name matchbox -p 8080:8080 -v /Users/oegger/Documents/github/matchbox/matchbox-server/with-settings:/config europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox:latest
 ```
+
+Docker options (`-v`, `-e`, ...) go before the image name: arguments after it are passed to matchbox as Spring Boot
+arguments (e.g. `--matchbox.fhir.context.onlyOneEngine=true`).
 
 note replace /Users/oegger/Documents/github/matchbox/matchbox-server/with-settings with the folder where you have your application.yaml (and since v3.9.10) your [fhir-settings.json](https://confluence.hl7.org/display/FHIR/Using+fhir-settings.json).
 
@@ -88,6 +91,21 @@ docker run -d --name matchbox -p 8080:8080 -e HEALTHCHECK_URL=http://localhost:8
 ```
 
 Note: In Kubernetes environments, Docker HEALTHCHECK is ignored — use `livenessProbe`/`readinessProbe` in your pod spec instead.
+
+The JVM options are set with the `JDK_JAVA_OPTIONS` environment variable, which defaults to
+`-XX:MaxRAMPercentage=70 -XX:+ExitOnOutOfMemoryError -XX:+UseStringDeduplication`: the heap is 70% of the memory
+limit of the container, the container exits on an `OutOfMemoryError` and can be restarted, and identical strings of the
+loaded packages share their memory. Set a memory limit for the container; 4 GB is enough for a typical setup of
+implementation guides:
+
+```bash
+docker run -d --name matchbox -p 8080:8080 -m 4g matchbox
+```
+
+Setting `JDK_JAVA_OPTIONS` replaces the default, so include a heap setting, `-XX:+ExitOnOutOfMemoryError` and
+`-XX:+UseStringDeduplication`.
+
+See [Running matchbox in docker](https://ahdis.github.io/matchbox/docker/#jvm-options) for details.
 
 To dynamically configure run in a kubernetes environment and add a kubernetes config map that provides /config/application.yaml file with implementation guide list like in "with-preload/application.yaml"
 
@@ -165,12 +183,16 @@ mvn -Dtest=CapabilityStatementTests test
 3. Wait for the [Angular workflow](https://github.com/ahdis/matchbox/blob/main/.github/workflows/angular_build.yml)
    to complete. Since the package.json was modified, the Angular project is rebuilt, unless you also have built the 
    Angular project in your commit ; in that case, the Angular workflow won't commit anything.
-4. Create a [release](https://github.com/ahdis/matchbox/releases) with the changelog (e.g. "matchbox v3.4.1") and a
-   [tag](https://github.com/ahdis/matchbox/tags) (e.g. `v.3.4.1`) in GitHub.
-5. It will trigger two workflows:
+4. Run the [release workflow](https://github.com/ahdis/matchbox/actions/workflows/release.yml) with the version (e.g.
+   `4.1.19`). It checks that the version matches the POM, creates the [tag](https://github.com/ahdis/matchbox/tags)
+   (e.g. `v4.1.19`) and the [release](https://github.com/ahdis/matchbox/releases) (e.g. "Release v4.1.19") with the
+   notes of that version from the changelog.
+5. The release workflow then starts two workflows on the new tag:
    1. The [Docker workflow](https://github.com/ahdis/matchbox/blob/main/.github/workflows/googleregistry.yml), that
       builds a Docker container around `matchbox-server` and publishes it to the Google Artifact registry.
    2. The [Maven workflow](https://github.com/ahdis/matchbox/blob/main/.github/workflows/central_repository.yml), that
       builds the `matchbox-engine` JAR and publishes it to the Maven Central Repository. The version used is the one
       specified in the POM.
+
+   Creating the tag and the release by hand in GitHub also triggers these two workflows.
 
