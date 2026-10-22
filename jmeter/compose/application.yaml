@@ -18,13 +18,13 @@ hapi:
     implementationguides:
       chelm:
         name: ch.fhir.ig.ch-elm
-        version: 1.15.1
+        version: 1.16.0
         url: file:/ig/ch.fhir.ig.ch-elm.tgz
 
 matchbox:
   fhir:
     context:
-      igsPreloaded: ch.fhir.ig.ch-elm#1.15.1
+      igsPreloaded: ch.fhir.ig.ch-elm#1.16.0
       ssrfProtectionEnabled: false
       txServer: http://localhost:${server.port}/matchboxv3/tx
       txUseEcosystem: false

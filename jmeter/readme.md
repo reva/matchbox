@@ -102,8 +102,10 @@ running. The server image takes them through `JDK_JAVA_OPTIONS`, which the java
 launcher reads by itself, so `local` needs no entrypoint override; setting it
 replaces the image defaults (`-XX:MaxRAMPercentage=70`,
 `-XX:+ExitOnOutOfMemoryError`, `-XX:+UseStringDeduplication`) so a run measures
-exactly the flags you gave it. The `released` image predates all of that, so
-`compose/docker-compose.yml` still replaces its entrypoint.
+exactly the flags you gave it. Released images before matchbox 4.1.18 hardcode
+`-Xmx12g` in their entrypoint, so `compose/docker-compose.yml` still replaces the
+entrypoint of `released` and clears `JDK_JAVA_OPTIONS`, which newer images set to
+the defaults above.
 
 ## Measuring an instance you did not start
 
@@ -352,7 +354,11 @@ later.
 
 `extract-payloads.sh` fetches the CH ELM package from the FHIR registry and
 extracts the example resources, so this repository does not depend on a checkout
-of `matchbox-ch-elm` next to it. `run.sh` calls it when `payloads/` is missing.
+of `matchbox-ch-elm` next to it. A version the registry does not have, such as
+the 1.16.0 ci-build, comes from `src/ch.fhir.ig.ch-elm.tgz` on the `main` branch
+of `ahdis/matchbox-ch-elm` instead (`CHELM_FALLBACK_URL`), and the script stops if
+that package is a different version. `run.sh` calls it when `payloads/` is
+missing.
 
 ```bash
 ./extract-payloads.sh                                        # default version
@@ -509,8 +515,13 @@ LT_TARGET=ref LT_SCENARIO=steady ./summarize.sh run.jtl . history.csv
 
 **`port is already allocated`** — something else is on 8080. Use `PORT=8081`.
 
-**`error getting credentials` pulling the released image** — a broken `gcloud`
-docker credential helper. The registry is public:
+**`not found` pulling an older released image** — matchbox-ch-elm images from
+`1.15.1-cibuild2` on are only on `ghcr.io/ahdis/matchbox-ch-elm`, older ones only
+on `europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox-ch-elm`. Set
+`CHELM_IMAGE` to the registry that has the tag.
+
+**`error getting credentials` pulling from `europe-west6-docker.pkg.dev`** — a
+broken `gcloud` docker credential helper. The registry is public:
 
 ```bash
 DOCKER_CONFIG=$(mktemp -d) docker pull europe-west6-docker.pkg.dev/ahdis-ch/ahdis/matchbox-ch-elm:1.15.1

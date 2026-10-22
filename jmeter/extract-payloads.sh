@@ -2,8 +2,10 @@
 # Build the load test payload corpus from a CH ELM implementation guide package.
 #
 # The package is fetched from the FHIR registry by default so this repository
-# does not depend on a checkout of matchbox-ch-elm sitting next to it. Point
-# CHELM_TGZ at a local .tgz to use one you already have.
+# does not depend on a checkout of matchbox-ch-elm sitting next to it. A version
+# the registry does not have yet, such as a ci-build, is taken from the
+# matchbox-ch-elm repository instead, which is what its image is built from.
+# Point CHELM_TGZ at a local .tgz to use one you already have.
 #
 #   ./extract-payloads.sh                    # fetch the default version
 #   CHELM_VERSION=1.14.0 ./extract-payloads.sh
@@ -12,9 +14,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-CHELM_VERSION="${CHELM_VERSION:-1.15.1}"
+CHELM_VERSION="${CHELM_VERSION:-1.16.0}"
 CHELM_TGZ="${CHELM_TGZ:-}"
 REGISTRY="${CHELM_REGISTRY:-https://packages.fhir.org}"
+FALLBACK_URL="${CHELM_FALLBACK_URL:-https://raw.githubusercontent.com/ahdis/matchbox-ch-elm/main/src/ch.fhir.ig.ch-elm.tgz}"
 OUT=payloads
 
 # Each profile key maps to a profile canonical URL and the example resources
@@ -49,12 +52,31 @@ if [ -n "$CHELM_TGZ" ]; then
 else
   url="$REGISTRY/ch.fhir.ig.ch-elm/$CHELM_VERSION"
   echo "Fetching $url"
-  curl -fsSL -o "$work/package.tgz" "$url" \
-    || { echo "Download failed. Set CHELM_TGZ to a local package instead." >&2; exit 1; }
+  if ! curl -fsSL -o "$work/package.tgz" "$url"; then
+    echo "Not in the registry, fetching $FALLBACK_URL"
+    curl -fsSL -o "$work/package.tgz" "$FALLBACK_URL" \
+      || { echo "Download failed. Set CHELM_TGZ to a local package instead." >&2; exit 1; }
+  fi
 fi
 
 tar xzf "$work/package.tgz" -C "$work"
-[ -d "$work/package/example" ] || { echo "No package/example/ in the package" >&2; exit 1; }
+
+version=$(sed -n 's/.*"version" *: *"\([^"]*\)".*/\1/p' "$work/package/package.json" | head -1)
+if [ -n "$CHELM_TGZ" ]; then
+  CHELM_VERSION="$version"
+elif [ "$version" != "$CHELM_VERSION" ]; then
+  echo "Expected ch.fhir.ig.ch-elm $CHELM_VERSION, the package is $version." >&2
+  echo "Set CHELM_TGZ or CHELM_FALLBACK_URL to a package of that version." >&2
+  exit 1
+fi
+
+# Packages built by newer IG Publishers keep the examples in package/examples/
+# (1.16.0 on), older ones in package/example/.
+examples=""
+for d in examples example; do
+  [ -d "$work/package/$d" ] && { examples="$work/package/$d"; break; }
+done
+[ -n "$examples" ] || { echo "No package/examples/ or package/example/ in the package" >&2; exit 1; }
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
@@ -66,7 +88,7 @@ for key in $PROFILE_KEYS; do
   mkdir -p "$dir"
 
   # shellcheck disable=SC2086
-  files=$(cd "$work/package/example" && ls $glob 2>/dev/null || true)
+  files=$(cd "$examples" && ls $glob 2>/dev/null || true)
   if [ -z "$files" ]; then
     echo "  $key: no examples matched $glob, skipping" >&2
     rmdir "$dir"
@@ -79,7 +101,7 @@ for key in $PROFILE_KEYS; do
   : > "$index"
   count=0
   for f in $files; do
-    cp "$work/package/example/$f" "$dir/$f"
+    cp "$examples/$f" "$dir/$f"
     echo "payloads/$key/$f" >> "$index"
     count=$((count + 1))
   done
