@@ -52,6 +52,25 @@ class R4ValidationTests {
 	}
 
 	/**
+	 * hasCanonicalResource() exists so that callers who only need to know whether a canonical resolves do not pay for
+	 * a version conversion they discard. It must agree with getCanonicalResource() != null in every case, including
+	 * for a FHIR version that cannot be converted to, which both report as not found.
+	 */
+	@ParameterizedTest
+	@ValueSource(strings = {
+		"http://hl7.org/fhir/StructureDefinition/CarePlan",   // known
+		"http://hl7.org/fhir/StructureDefinition/Patient",    // known
+		"http://example.org/StructureDefinition/nonexistent", // unknown
+	})
+	void hasCanonicalResourceAgreesWithGetCanonicalResource(final String canonical) {
+		for (final String version : List.of("4.0.1", "4.3.0", "5.0.0", "3.0.2", "")) {
+			assertEquals(this.engine.getCanonicalResource(canonical, version) != null,
+							 this.engine.hasCanonicalResource(canonical, version),
+							 "disagreement for %s at FHIR version '%s'".formatted(canonical, version));
+		}
+	}
+
+	/**
 	 * Test the validation of a code from a value set defined with simple includes.
 	 *
 	 * http://hl7.org/fhir/R4/careplan.html

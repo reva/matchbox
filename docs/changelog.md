@@ -25,6 +25,19 @@
 - The `onlyOneEngine` mode exposes the NamingSystems of the main engine (`GET [base]/NamingSystem`), e.g. to debug the
   OID to URI mapping of `http://hl7.org/fhir/ConceptMap/special-oid2uri` in transformations
   ([#664](https://github.com/ahdis/matchbox/issues/664))
+- Add a load test for `$validate` in `jmeter/`: arrival rate and fixed concurrency scenarios (smoke, steady, ramp)
+  that can target a locally built matchbox, the published matchbox-ch-elm image (ch-elm 1.16.0 on matchbox
+  5.0.0-rc2, from ghcr.io), or a remote instance with mutual TLS, reporting the server side validation time
+  separately from HTTP latency and recording each run in a comparable history file. The run stops before sending
+  load when the server has not loaded the IG version the payloads were taken from
+- Document the first load test findings in `jmeter/readme.md`: ParallelGC gives 29% more `$validate` throughput and
+  45% lower p95 than G1 on the same hardware, throughput stops scaling past about four cores, and a larger heap
+  does not help
+- Avoid a discarded R5-to-R4 conversion on the validation path: `MatchboxEngineSupport.getMatchboxEngine()` only
+  needed to know whether a canonical resolves, but called `MatchboxEngine.getCanonicalResource()`, which converts
+  the resource to the requested FHIR version before returning it, and then used the result solely as a null check.
+  Added `MatchboxEngine.hasCanonicalResource()` for that check. Measured throughput on a CH ELM workload was
+  unchanged, so this removes dead work rather than a bottleneck
 
 2026/10/05 Release 4.1.21
 
