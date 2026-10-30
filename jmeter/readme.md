@@ -379,6 +379,17 @@ The same tarball goes to `compose/ig/` and is loaded by the local server, so
 payloads and server always come from one IG version. `extract-payloads.sh` warns
 if `compose/application.yaml` pins a different one.
 
+`payloads/` is not committed and `run.sh` only builds it when it is missing, so
+a corpus from an earlier version stays until you delete it. For any target,
+including an instance you did not start, the setup phase therefore lists the IGs
+the server has installed (`GET /fhir/ImplementationGuide`) and stops before
+sending any load when `ch.fhir.ig.ch-elm` is not there in the version of
+`payloads/.ig-version`. The message names the version the server has and the
+command that builds matching payloads. A server that does not answer the listing
+only logs a warning in `jmeter.log`. `--no-ig-check` skips the check. It
+compares versions, so two builds of the same version, such as ci-builds, look the
+same to it.
+
 ## Findings from the first tuning pass
 
 M-series Mac, 10 cores, Docker limited to 4 CPUs for matchbox, CH ELM 1.15.1,

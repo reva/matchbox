@@ -67,6 +67,9 @@ NR == 1 {
 		next
 	}
 	if (label ~ /^prepare-/) {
+		if (label == "prepare-ig-check" && f[col["responseCode"]] == "IG_MISMATCH") {
+			igmsg = f[col["responseMessage"]]
+		}
 		if (label == "prepare-readiness" && f[col["success"]] != "true") {
 			readycode = f[col["responseCode"]]
 			readymsg  = f[col["responseMessage"]]
@@ -113,17 +116,17 @@ END {
 	for (c in codes) cs = (cs == "" ? "" : cs ", ") c "=" codes[c]
 	ns = 0
 	for (s in sessions) ns++
-	printf "total=%d\nfailed=%d\nfirst=%d\nlast=%d\nheap=%d\nversions=%s\ncodes=%s\nsessions=%d\nreadycode=%s\nreadymsg=%s\ncpumean=%.4f\ncpumax=%.4f\nactuatorcode=%s\nactuatorurl=%s\nmetricsn=%d\n", \
+	printf "total=%d\nfailed=%d\nfirst=%d\nlast=%d\nheap=%d\nversions=%s\ncodes=%s\nsessions=%d\nreadycode=%s\nreadymsg=%s\ncpumean=%.4f\ncpumax=%.4f\nactuatorcode=%s\nactuatorurl=%s\nmetricsn=%d\nigmsg=%s\n", \
 		total + 0, failed + 0, first + 0, last + 0, heap + 0, \
 		(vs == "" ? "unknown" : vs), cs, ns, readycode, readymsg, \
-		(cpun ? cpusum / cpun : -1), (cpun ? cpumax : -1), actuatorcode, actuatorurl, metricsn + 0 > (work "/counters")
+		(cpun ? cpusum / cpun : -1), (cpun ? cpumax : -1), actuatorcode, actuatorurl, metricsn + 0, igmsg > (work "/counters")
 }
 ' "$JTL"
 
 # Declared here so the script still behaves under set -u if the awk pass above
 # produced nothing, and so it is visible where these come from.
 total=0; failed=0; first=0; last=0; heap=0
-versions=unknown; codes=; sessions=0; readycode=; readymsg=
+versions=unknown; codes=; sessions=0; readycode=; readymsg=; igmsg=
 cpumean=-1; cpumax=-1; actuatorcode=; actuatorurl=; metricsn=0
 
 # Read rather than source. The values come from the server: responseMessage is
@@ -140,6 +143,7 @@ while IFS='=' read -r key value; do
 		sessions)  sessions="$value" ;;
 		readycode) readycode="$value" ;;
 		readymsg)  readymsg="$value" ;;
+		igmsg)     igmsg="$value" ;;
 		cpumean)   cpumean="$value" ;;
 		cpumax)    cpumax="$value" ;;
 		actuatorcode) actuatorcode="$value" ;;
@@ -149,7 +153,18 @@ while IFS='=' read -r key value; do
 done < "$work/counters"
 
 if [ "$total" -eq 0 ]; then
-	if [ -n "$readycode" ]; then
+	if [ -n "$igmsg" ]; then
+		have="${igmsg##*server has }"
+		echo "the server has not loaded the IG version the payloads were taken from, so the test stopped before sending any load:" >&2
+		echo "  ${LT_IG_NAME:-the IG} $igmsg" >&2
+		case "$have" in
+			none) echo "  the IG is not installed on the target." >&2 ;;
+			*\|*) echo "  the target has several versions installed: $have." >&2 ;;
+			*) echo "  Build the payloads of the version on the target:" >&2
+			   echo "    rm -rf payloads && CHELM_VERSION=$have ./extract-payloads.sh" >&2 ;;
+		esac
+		echo "  Or pass --no-ig-check to run anyway." >&2
+	elif [ -n "$readycode" ]; then
 		# Almost always this: readiness failed and stopped the test before any
 		# load was sent. Say that rather than "no samples".
 		echo "the target did not respond to GET /fhir/metadata, so the test stopped before sending any load:" >&2

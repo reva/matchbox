@@ -28,7 +28,8 @@
 - Add a load test for `$validate` in `jmeter/`: arrival rate and fixed concurrency scenarios (smoke, steady, ramp)
   that can target a locally built matchbox, the published matchbox-ch-elm image (ch-elm 1.16.0 on matchbox
   5.0.0-rc2, from ghcr.io), or a remote instance with mutual TLS, reporting the server side validation time
-  separately from HTTP latency and recording each run in a comparable history file
+  separately from HTTP latency and recording each run in a comparable history file. The run stops before sending
+  load when the server has not loaded the IG version the payloads were taken from
 - Document the first load test findings in `jmeter/readme.md`: ParallelGC gives 29% more `$validate` throughput and
   45% lower p95 than G1 on the same hardware, throughput stops scaling past about four cores, and a larger heap
   does not help

@@ -24,6 +24,7 @@ BUILD=0
 KEEP_UP=0
 ALLOW_REAL=0
 FRESH=0
+IG_CHECK=1
 EXTRA_PARAMS=""
 RAMP_STEPS="1,2,4,8,16,32"
 RAMP_P95_MS=5000
@@ -50,6 +51,7 @@ usage() {
   --build                rebuild matchbox.jar before starting the local container
   --keep-up              leave the container running after the run
   --fresh                drop the cached IG package database first (slow cold start)
+  --no-ig-check          do not stop when the server has not loaded the IG version of the payloads
   --i-know-this-is-a-real-instance
                          required to raise the rate against a non-localhost host
 EOF
@@ -70,6 +72,7 @@ while [ $# -gt 0 ]; do
     --build)         BUILD=1; shift ;;
     --keep-up)       KEEP_UP=1; shift ;;
     --fresh)         FRESH=1; shift ;;
+    --no-ig-check)   IG_CHECK=0; shift ;;
     --i-know-this-is-a-real-instance) ALLOW_REAL=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     *) die "unknown argument: $1  (try --help)" ;;
@@ -197,6 +200,10 @@ fi
 [ -f "$PAYLOAD_INDEX" ] || die "no corpus for profile key '$PROFILE_KEY'"
 PROFILE_URL="$(cat "$PROFILE_FILE")"
 IG_VERSION="$(cat payloads/.ig-version 2>/dev/null || echo unknown)"
+IG_NAME=ch.fhir.ig.ch-elm
+# An unknown version cannot be compared with anything, so there is nothing to check.
+IG_CHECK_ARG=on
+if [ "$IG_CHECK" -eq 0 ] || [ "$IG_VERSION" = unknown ]; then IG_CHECK_ARG=off; fi
 
 # --------------------------------------------------------------------------
 # JMeter
@@ -395,6 +402,9 @@ run_once() {
     "-Jwarmup=$WARMUP"
     "-Jmetrics=$METRICS"
     "-Jextraparams=$EXTRA_PARAMS"
+    "-Jigcheck=$IG_CHECK_ARG"
+    "-Jigname=$IG_NAME"
+    "-Jigversion=$IG_VERSION"
     "-Jjtl=$dir/run.jtl"
     "${AUTH_ARGS[@]+"${AUTH_ARGS[@]}"}"
   )
@@ -433,7 +443,7 @@ run_once() {
   LT_TIMESTAMP="$STAMP" LT_TARGET="$TARGET_NAME" LT_SCENARIO="$tag" \
   LT_PROFILE_KEY="$PROFILE_KEY" LT_RATE="$rate" LT_DURATION="$DURATION" \
   LT_THREADS="$THREADS" LT_JAVA_OPTS="${JAVA_OPTS:-}" LT_CPUS="${CPUS:-}" \
-  LT_IG_VERSION="$IG_VERSION" LT_PARAMS="$EXTRA_PARAMS" \
+  LT_IG_VERSION="$IG_VERSION" LT_IG_NAME="$IG_NAME" LT_PARAMS="$EXTRA_PARAMS" \
     ./summarize.sh "$dir/run.jtl" "$dir" results/history.csv
 
   LAST_DIR="$dir"

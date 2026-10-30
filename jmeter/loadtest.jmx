@@ -131,6 +131,61 @@ if (!prev.isSuccessful()) {
           <hashTree/>
         </hashTree>
 
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="if ig check not off" enabled="true">
+          <stringProp name="IfController.condition">${__groovy(props.getProperty("igcheck") != "off")}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="prepare-ig-check" enabled="true">
+            <stringProp name="TestPlan.comments">Readiness only shows that the server is up. The payloads were taken from one version of the IG, so stop when the server has loaded another one, instead of measuring validations of examples against the wrong profiles.</stringProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables" enabled="true">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+            <stringProp name="HTTPSampler.path">${host}/fhir/ImplementationGuide?_elements=packageId,version&amp;_count=1000</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <stringProp name="HTTPSampler.connect_timeout">15000</stringProp>
+            <stringProp name="HTTPSampler.response_timeout">60000</stringProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223PostProcessor guiclass="TestBeanGUI" testclass="JSR223PostProcessor" testname="stop if the IG version differs" enabled="true">
+              <stringProp name="scriptLanguage">groovy</stringProp>
+              <stringProp name="script">// A server that does not answer the listing (blocked, or not matchbox) is not
+// a reason to stop, only a reason to say that nothing was checked. Only a
+// listing that lacks the IG version of the payloads stops the test.
+def name = props.getProperty("igname");
+def want = props.getProperty("igversion");
+if (prev.getResponseCode() != "200") {
+    log.warn("cannot list the installed IGs at " + vars.get("host") + "/fhir/ImplementationGuide (" + prev.getResponseCode()
+             + "), not checking that the server has " + name + "#" + want);
+    return;
+}
+def body = new groovy.json.JsonSlurper().parseText(prev.getResponseDataAsString());
+def have = (body.entry ?: []).collect { it.resource }.findAll { it.packageId == name }.collect { it.version }.sort();
+if (have.contains(want)) {
+    return;
+}
+if (body.link?.any { it.relation == "next" }) {
+    log.warn("the IG listing of " + vars.get("host") + " has more than one page, not checking that the server has " + name + "#" + want);
+    return;
+}
+log.error("the server has " + name + " " + (have ? have.join(", ") : "not installed") + ", the payloads are from " + want);
+prev.setSuccessful(false);
+prev.setResponseCode("IG_MISMATCH");
+prev.setResponseMessage(want + " expected, server has " + (have ? have.join("|") : "none"));
+prev.setStopTest(true);
+</stringProp>
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+            </JSR223PostProcessor>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+
         <IfController guiclass="IfControllerPanel" testclass="IfController" testname="if metrics not off" enabled="true">
           <!-- No comma in the groovy expression: JMeter splits function
                arguments on commas, so props.getProperty("metrics","auto")
