@@ -69,7 +69,7 @@ services:
 
   matchbox-released:
     profiles: ["released"]
-    image: "${CHELM_IMAGE:-ghcr.io/ahdis/matchbox-ch-elm:1.16.0-cibuild.20261022063221-5.0.0-rc1}"
+    image: "${CHELM_IMAGE:-ghcr.io/ahdis/matchbox-ch-elm:1.16.0-cibuild.20261028103805-5.0.0-rc2}"
     container_name: matchbox-loadtest
     <<: *entrypoint
     ports:
